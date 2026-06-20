@@ -22,10 +22,7 @@ pub async fn submit_parent_feedback(
     }
 
     // 如果有登录态则关联用户；没有或失效也允许匿名提交，避免家长反馈丢失。
-    let user_id = me::current_user(&state, &headers)
-        .await
-        .ok()
-        .and_then(|user| uuid::Uuid::parse_str(&user.id).ok());
+    let user_id = me::current_user(&state, &headers).await.ok().map(|user| user.id);
     let (id, created_at) = feedback_store::create_parent_feedback(&state.db, user_id, &payload).await?;
 
     Ok(Json(ParentFeedbackResponse {

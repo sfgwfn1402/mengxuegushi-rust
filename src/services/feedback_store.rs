@@ -7,7 +7,7 @@ use crate::{error::AppError, models::feedback::ParentFeedbackRequest};
 
 pub async fn create_parent_feedback(
     db: &PgPool,
-    user_id: Option<Uuid>,
+    user_id: Option<String>,
     payload: &ParentFeedbackRequest,
 ) -> Result<(Uuid, DateTime<Utc>), AppError> {
     let id = Uuid::new_v4();

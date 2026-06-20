@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS parent_feedback (
     id UUID PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     age TEXT,
     feedback_type TEXT NOT NULL,
     pain_point TEXT,
