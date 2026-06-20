@@ -89,7 +89,7 @@ pub async fn update_feedback_status(
             admin_note = $2,
             handled_by = $3,
             handled_at = CURRENT_TIMESTAMP
-        WHERE id = $4
+        WHERE id = $4::uuid
         RETURNING id::text, user_id, age, feedback_type, pain_point, suggestion, contact,
                   COALESCE(status, 'pending') AS status, admin_note, handled_at, handled_by, created_at
         "#,
