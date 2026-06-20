@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod artworks;
 pub mod auth;
+pub mod feedback;
 pub mod health;
 pub mod me;
 pub mod media;
@@ -32,6 +33,7 @@ pub fn api_routes() -> Router<AppState> {
             post(admin::review_recitation),
         )
         .route("/themes", get(themes::list_themes))
+        .route("/feedback", post(feedback::submit_parent_feedback))
         .route("/poems", get(poems::list_poems))
         .route("/poems/{id}", get(poems::get_poem))
         .route(
