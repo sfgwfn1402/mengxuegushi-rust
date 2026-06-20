@@ -40,7 +40,7 @@ pub async fn upsert_wechat_user(
 
 pub async fn find_user_by_id(db: &PgPool, id: &str) -> Result<Option<User>, AppError> {
     let row =
-        sqlx::query("SELECT id, openid, unionid, nickname, avatar_url FROM users WHERE id = $1")
+        sqlx::query("SELECT id, openid, unionid, nickname, avatar_url, COALESCE(role, 'user') AS role FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
             .await
@@ -51,7 +51,7 @@ pub async fn find_user_by_id(db: &PgPool, id: &str) -> Result<Option<User>, AppE
 
 pub async fn find_user_by_openid(db: &PgPool, openid: &str) -> Result<Option<User>, AppError> {
     let row = sqlx::query(
-        "SELECT id, openid, unionid, nickname, avatar_url FROM users WHERE openid = $1",
+        "SELECT id, openid, unionid, nickname, avatar_url, COALESCE(role, 'user') AS role FROM users WHERE openid = $1",
     )
     .bind(openid)
     .fetch_optional(db)
@@ -240,6 +240,7 @@ fn row_to_user(row: sqlx::postgres::PgRow) -> User {
         unionid: row.get("unionid"),
         nickname: row.get("nickname"),
         avatar_url: row.get("avatar_url"),
+        role: row.get("role"),
     }
 }
 

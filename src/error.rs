@@ -16,6 +16,9 @@ pub enum AppError {
     #[error("unauthorized: {0}")]
     Unauthorized(String),
 
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
     #[error("upstream error: {0}")]
     Upstream(String),
 
@@ -35,6 +38,7 @@ impl IntoResponse for AppError {
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "BAD_REQUEST"),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
             AppError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED"),
+            AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "FORBIDDEN"),
             AppError::Upstream(_) => (StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
         };

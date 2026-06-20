@@ -7,6 +7,7 @@ pub struct User {
     pub unionid: Option<String>,
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
+    pub role: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

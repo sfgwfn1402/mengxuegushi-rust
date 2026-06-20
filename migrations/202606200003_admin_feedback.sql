@@ -1,0 +1,11 @@
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+
+ALTER TABLE parent_feedback
+ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending',
+ADD COLUMN IF NOT EXISTS admin_note TEXT,
+ADD COLUMN IF NOT EXISTS handled_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS handled_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_parent_feedback_status_created
+ON parent_feedback(status, created_at DESC);

@@ -24,6 +24,11 @@ pub fn api_routes() -> Router<AppState> {
         .route("/home/recommendations", get(home::recommendations))
         .route("/home/popular-recitations", get(home::popular_recitations))
         .route("/works/qrcode", get(qrcode::work_qrcode))
+        .route("/admin/feedback", get(admin::list_feedback))
+        .route(
+            "/admin/feedback/{feedback_id}/status",
+            post(admin::update_feedback_status),
+        )
         .route(
             "/admin/artworks/{artwork_id}/review",
             post(admin::review_artwork),
