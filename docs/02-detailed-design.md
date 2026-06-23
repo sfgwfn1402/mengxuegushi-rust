@@ -112,7 +112,7 @@ POST /api/auth/wechat-login
 ```text
 小程序 wx.login 得到 code
   -> 后端调用微信 code2session
-  -> 得到 openid/session_key/unionid
+  -> 得到 openid/unionid（session_key 只在服务端处理，禁止返回给小程序）
   -> users 表 upsert 用户
   -> 返回 token
 ```
@@ -216,7 +216,7 @@ HTTP 状态码：
 
 - token 改 JWT
 - refresh token
-- 微信 session_key 加密存储或不落库
+- 微信 session_key 不返回给小程序；如后续确需使用，只能服务端加密存储或不落库
 - 管理后台
 - 音频上传管理
 - 用户数据导出

@@ -29,13 +29,15 @@ pub fn api_routes() -> Router<AppState> {
             "/admin/feedback/{feedback_id}/status",
             post(admin::update_feedback_status),
         )
-        .route(
-            "/admin/artworks/{artwork_id}/review",
-            post(admin::review_artwork),
-        )
+        .route("/admin/recitations", get(admin::list_recitations))
         .route(
             "/admin/recitations/{recitation_id}/review",
             post(admin::review_recitation),
+        )
+        .route("/admin/artworks", get(admin::list_artworks))
+        .route(
+            "/admin/artworks/{artwork_id}/review",
+            post(admin::review_artwork),
         )
         .route("/themes", get(themes::list_themes))
         .route("/feedback", post(feedback::submit_parent_feedback))

@@ -81,7 +81,7 @@ ENABLE_DEV_LOGIN=true
 处理流程：
 
 ```text
-code -> 微信 code2session -> openid/session_key/unionid -> upsert users -> 返回 token
+code -> 微信 code2session -> openid/unionid（session_key 只在服务端处理，禁止返回给小程序） -> upsert users -> 返回 token
 ```
 
 响应：
@@ -91,7 +91,6 @@ code -> 微信 code2session -> openid/session_key/unionid -> upsert users -> 返
   "token": "dev-token-{user_id}",
   "user_id": "uuid",
   "openid": "openid",
-  "session_key": "session_key",
   "unionid": null
 }
 ```

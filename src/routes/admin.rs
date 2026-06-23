@@ -4,9 +4,9 @@ use serde::Deserialize;
 use crate::{
     error::AppError,
     models::{
-        artwork::DeleteArtworkResponse,
+        artwork::{AdminArtworkListResponse, DeleteArtworkResponse},
         feedback::{AdminFeedbackListResponse, AdminFeedbackQuery, UpdateFeedbackStatusRequest},
-        recitation::DeleteRecitationResponse,
+        recitation::{AdminRecitationListResponse, AdminRecitationQuery, DeleteRecitationResponse},
         user::User,
     },
     routes::me,
@@ -70,8 +70,16 @@ pub async fn review_artwork(
     Path(artwork_id): Path<String>,
     Json(payload): Json<ReviewRequest>,
 ) -> Result<Json<DeleteArtworkResponse>, AppError> {
-    ensure_admin(&state, &headers)?;
+    current_admin(&state, &headers).await?;
     let status = normalize_status(&payload.status)?;
+    // Refuse to review private (active/draft) works — those are user drafts
+    // and shouldn't appear in the admin review queue at all.
+    let current = artwork_store::get_status(&state.db, &artwork_id).await?;
+    if current.as_deref() == Some("active") {
+        return Err(AppError::BadRequest(
+            "private (active) works do not need admin review".to_string(),
+        ));
+    }
     Ok(Json(
         artwork_store::admin_set_status(&state.db, &artwork_id, status).await?,
     ))
@@ -83,10 +91,56 @@ pub async fn review_recitation(
     Path(recitation_id): Path<String>,
     Json(payload): Json<ReviewRequest>,
 ) -> Result<Json<DeleteRecitationResponse>, AppError> {
-    ensure_admin(&state, &headers)?;
+    current_admin(&state, &headers).await?;
     let status = normalize_status(&payload.status)?;
+    // Refuse to review private (active/draft) works — those are user drafts
+    // and shouldn't appear in the admin review queue at all.
+    let current = recitation_store::get_status(&state.db, &recitation_id).await?;
+    if current.as_deref() == Some("active") {
+        return Err(AppError::BadRequest(
+            "private (active) works do not need admin review".to_string(),
+        ));
+    }
     let deleted = recitation_store::admin_set_status(&state.db, &recitation_id, status).await?;
     Ok(Json(DeleteRecitationResponse { deleted }))
+}
+
+pub async fn list_recitations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<AdminRecitationQuery>,
+) -> Result<Json<AdminRecitationListResponse>, AppError> {
+    current_admin(&state, &headers).await?;
+    let page = query.page();
+    let page_size = query.page_size();
+    let status_filter = query.status_filter();
+    let (total, items) = recitation_store::list_admin_recitations(
+        &state.db,
+        page,
+        page_size,
+        status_filter.as_deref(),
+    )
+    .await?;
+    Ok(Json(AdminRecitationListResponse { total, items }))
+}
+
+pub async fn list_artworks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<crate::models::artwork::AdminArtworkQuery>,
+) -> Result<Json<AdminArtworkListResponse>, AppError> {
+    current_admin(&state, &headers).await?;
+    let page = query.page();
+    let page_size = query.page_size();
+    let status_filter = query.status_filter();
+    let (total, items) = artwork_store::list_admin_artworks(
+        &state.db,
+        page,
+        page_size,
+        status_filter.as_deref(),
+    )
+    .await?;
+    Ok(Json(AdminArtworkListResponse { total, items }))
 }
 
 pub async fn list_feedback(

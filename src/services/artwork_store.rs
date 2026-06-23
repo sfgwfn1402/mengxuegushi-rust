@@ -191,6 +191,114 @@ pub async fn admin_set_status(
     })
 }
 
+pub async fn get_status(db: &PgPool, artwork_id: &str) -> Result<Option<String>, AppError> {
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM poem_artworks WHERE id = $1",
+    )
+    .bind(artwork_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    Ok(status)
+}
+
+pub async fn list_admin_artworks(
+    db: &PgPool,
+    page: u32,
+    page_size: u32,
+    status_filter: Option<&str>,
+) -> Result<(i64, Vec<crate::models::artwork::ArtworkItem>), AppError> {
+    use sqlx::Row;
+
+    let offset = ((page - 1) as i64) * (page_size as i64);
+    let limit = page_size as i64;
+
+    let count_sql = match status_filter {
+        Some(_) => "SELECT COUNT(*) FROM poem_artworks WHERE status = $1",
+        None => "SELECT COUNT(*) FROM poem_artworks WHERE status IN ('submitted','public','rejected')",
+    };
+
+    let total: i64 = match status_filter {
+        Some(status) => sqlx::query_scalar(count_sql)
+            .bind(status)
+            .fetch_one(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?,
+        None => sqlx::query_scalar(count_sql)
+            .fetch_one(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?,
+    };
+
+    let rows = match status_filter {
+        Some(status) => sqlx::query(
+            r#"
+            SELECT a.id, a.poem_id, a.user_id, u.nickname, u.avatar_url, p.title AS poem_title,
+                   a.title, a.description, a.image_url, a.like_count, a.status, a.created_at,
+                   FALSE AS liked_by_me
+            FROM poem_artworks a
+            JOIN users u ON u.id = a.user_id
+            JOIN poems p ON p.id = a.poem_id
+            WHERE a.status = $1
+            ORDER BY
+                CASE a.status WHEN 'submitted' THEN 0 ELSE 1 END,
+                a.created_at DESC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(status)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?,
+        None => sqlx::query(
+            r#"
+            SELECT a.id, a.poem_id, a.user_id, u.nickname, u.avatar_url, p.title AS poem_title,
+                   a.title, a.description, a.image_url, a.like_count, a.status, a.created_at,
+                   FALSE AS liked_by_me
+            FROM poem_artworks a
+            JOIN users u ON u.id = a.user_id
+            JOIN poems p ON p.id = a.poem_id
+            WHERE a.status IN ('submitted','public','rejected')
+            ORDER BY
+                CASE a.status WHEN 'submitted' THEN 0 ELSE 1 END,
+                a.created_at DESC
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?,
+    };
+
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            use crate::models::artwork::ArtworkItem;
+            ArtworkItem {
+                id: row.get("id"),
+                poem_id: row.get("poem_id"),
+                user_id: row.get("user_id"),
+                nickname: row.get("nickname"),
+                avatar_url: row.get("avatar_url"),
+                poem_title: row.get("poem_title"),
+                title: row.get("title"),
+                description: row.get("description"),
+                image_url: row.get("image_url"),
+                like_count: row.get("like_count"),
+                liked_by_me: row.get("liked_by_me"),
+                status: row.get("status"),
+                created_at: row.get("created_at"),
+            }
+        })
+        .collect();
+
+    Ok((total, items))
+}
+
 pub async fn like_artwork(
     db: &PgPool,
     artwork_id: &str,

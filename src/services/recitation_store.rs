@@ -405,6 +405,114 @@ pub async fn admin_set_status(
     Ok(rows > 0)
 }
 
+pub async fn get_status(db: &PgPool, recitation_id: &str) -> Result<Option<String>, AppError> {
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM user_recitations WHERE id = $1",
+    )
+    .bind(recitation_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    Ok(status)
+}
+
+pub async fn list_admin_recitations(
+    db: &PgPool,
+    page: u32,
+    page_size: u32,
+    status_filter: Option<&str>,
+) -> Result<(i64, Vec<RecitationItem>), AppError> {
+    let offset = ((page - 1) as i64) * (page_size as i64);
+    let limit = page_size as i64;
+
+    let (total, items): (i64, Vec<RecitationItem>) = match status_filter {
+        Some(status) => {
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM user_recitations WHERE status = $1",
+            )
+            .bind(status)
+            .fetch_one(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?;
+
+            let items = sqlx::query_as::<_, RecitationItem>(
+                r#"
+                SELECT
+                    r.id,
+                    r.poem_id,
+                    r.user_id,
+                    u.nickname,
+                    u.avatar_url,
+                    ('/recitations/' || r.id || '/audio') AS audio_url,
+                    r.duration_seconds,
+                    r.like_count,
+                    FALSE AS liked_by_me,
+                    r.status,
+                    r.created_at
+                FROM user_recitations r
+                JOIN users u ON u.id = r.user_id
+                WHERE r.status = $1
+                ORDER BY
+                    CASE r.status WHEN 'submitted' THEN 0 ELSE 1 END,
+                    r.created_at DESC
+                LIMIT $2 OFFSET $3
+                "#,
+            )
+            .bind(status)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?;
+
+            (total, items)
+        }
+        None => {
+            // Default "全部" view excludes private (active) works — those are user
+            // drafts and do not need admin review.
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM user_recitations WHERE status IN ('submitted','public','rejected')",
+            )
+            .fetch_one(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?;
+
+            let items = sqlx::query_as::<_, RecitationItem>(
+                r#"
+                SELECT
+                    r.id,
+                    r.poem_id,
+                    r.user_id,
+                    u.nickname,
+                    u.avatar_url,
+                    ('/recitations/' || r.id || '/audio') AS audio_url,
+                    r.duration_seconds,
+                    r.like_count,
+                    FALSE AS liked_by_me,
+                    r.status,
+                    r.created_at
+                FROM user_recitations r
+                JOIN users u ON u.id = r.user_id
+                WHERE r.status IN ('submitted','public','rejected')
+                ORDER BY
+                    CASE r.status WHEN 'submitted' THEN 0 ELSE 1 END,
+                    r.created_at DESC
+                LIMIT $1 OFFSET $2
+                "#,
+            )
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?;
+
+            (total, items)
+        }
+    };
+
+    Ok((total, items))
+}
+
 #[allow(dead_code)]
 pub fn now() -> DateTime<Utc> {
     Utc::now()

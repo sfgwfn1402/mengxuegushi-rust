@@ -241,8 +241,9 @@ pub async fn submit_recitation(
     Path(recitation_id): Path<String>,
 ) -> Result<Json<DeleteRecitationResponse>, AppError> {
     let user = current_user(&state, &headers).await?;
+    // 进入待审核队列；管理员审核通过后才会变更为 public，进入发现页。
     let deleted =
-        recitation_store::set_submission_status(&state.db, &recitation_id, &user.id, "public")
+        recitation_store::set_submission_status(&state.db, &recitation_id, &user.id, "submitted")
             .await?;
     Ok(Json(DeleteRecitationResponse { deleted }))
 }
