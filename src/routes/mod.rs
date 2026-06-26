@@ -96,6 +96,7 @@ pub fn api_routes() -> Router<AppState> {
         .route("/me/stats", get(me::stats))
         .route("/me/checkin", post(me::checkin))
         .route("/me/reminder-subscribe", post(me::subscribe_reminder))
+        .route("/me/invite-info", get(me::invite_info))
         .route("/admin/send-reminders", post(admin::send_reminders))
         .route("/me/tasks", post(me::complete_task))
         .route("/me/clear-data", post(me::clear_data))

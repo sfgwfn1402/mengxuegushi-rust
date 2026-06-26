@@ -22,8 +22,14 @@ pub async fn wechat_login(
         .clone()
         .ok_or_else(|| AppError::Upstream("wechat response missing openid".to_string()))?;
 
-    let user =
+    let (user, is_new) =
         user_store::upsert_wechat_user(&state.db, &openid, session.unionid.as_deref()).await?;
+
+    if is_new {
+        if let Some(inviter_id) = payload.invite_from.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let _ = user_store::record_invite(&state.db, &user.id, inviter_id).await;
+        }
+    }
 
     // TODO: 后续换成 JWT。开发期 token 直接携带 user_id，方便小程序先联调。
     let token = format!("dev-token-{}", user.id);
@@ -59,7 +65,7 @@ pub async fn dev_login(
         .map(str::trim)
         .filter(|value| !value.is_empty());
 
-    let user = user_store::upsert_wechat_user(&state.db, &openid, unionid).await?;
+    let (user, _) = user_store::upsert_wechat_user(&state.db, &openid, unionid).await?;
     let token = format!("dev-token-{}", user.id);
 
     Ok(Json(LoginResponse {

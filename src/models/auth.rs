@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize)]
 pub struct WechatLoginRequest {
     pub code: String,
+    pub invite_from: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

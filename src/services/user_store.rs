@@ -6,12 +6,14 @@ use crate::{
     models::user::{UpdateProgressRequest, User, UserPoemProgress},
 };
 
+/// Returns (user, is_new_user).
 pub async fn upsert_wechat_user(
     db: &PgPool,
     openid: &str,
     unionid: Option<&str>,
-) -> Result<User, AppError> {
+) -> Result<(User, bool), AppError> {
     let existing = find_user_by_openid(db, openid).await?;
+    let is_new = existing.is_none();
     let id = existing
         .as_ref()
         .map(|user| user.id.clone())
@@ -33,9 +35,47 @@ pub async fn upsert_wechat_user(
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
 
-    find_user_by_id(db, &id)
+    let user = find_user_by_id(db, &id)
         .await?
-        .ok_or_else(|| AppError::Internal("failed to load upserted user".to_string()))
+        .ok_or_else(|| AppError::Internal("failed to load upserted user".to_string()))?;
+    Ok((user, is_new))
+}
+
+pub async fn record_invite(db: &PgPool, user_id: &str, inviter_id: &str) -> Result<(), AppError> {
+    if user_id == inviter_id {
+        return Ok(());
+    }
+    // Verify inviter exists
+    if find_user_by_id(db, inviter_id).await?.is_none() {
+        return Ok(());
+    }
+    let affected = sqlx::query(
+        "UPDATE users SET invited_by = $1 WHERE id = $2 AND invited_by IS NULL",
+    )
+    .bind(inviter_id)
+    .bind(user_id)
+    .execute(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?
+    .rows_affected();
+
+    if affected > 0 {
+        sqlx::query("UPDATE users SET invite_count = invite_count + 1 WHERE id = $1")
+            .bind(inviter_id)
+            .execute(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?;
+    }
+    Ok(())
+}
+
+pub async fn get_invite_count(db: &PgPool, user_id: &str) -> Result<i32, AppError> {
+    let row = sqlx::query("SELECT invite_count FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+    Ok(row.map(|r| r.get::<i32, _>("invite_count")).unwrap_or(0))
 }
 
 pub async fn find_user_by_id(db: &PgPool, id: &str) -> Result<Option<User>, AppError> {

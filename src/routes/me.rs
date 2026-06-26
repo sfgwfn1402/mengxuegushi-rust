@@ -8,6 +8,7 @@ use crate::{
     error::AppError,
     models::{
         activity::{CompleteTaskRequest, IdiomProgressListResponse, UpdateIdiomProgressRequest},
+        invite::{invite_badge, InviteInfoResponse},
         profile::UpdateProfileRequest,
         recitation::RecitationListResponse,
         user::{FavoriteListResponse, ProgressListResponse, UpdateProgressRequest, User},
@@ -143,6 +144,22 @@ pub async fn checkin(
 ) -> Result<Json<crate::models::activity::CheckinResponse>, AppError> {
     let user = current_user(&state, &headers).await?;
     Ok(Json(activity_store::checkin(&state.db, &user.id).await?))
+}
+
+pub async fn invite_info(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<InviteInfoResponse>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    let count = user_store::get_invite_count(&state.db, &user.id).await?;
+    let (badge, badge_label, next_badge_at) = invite_badge(count);
+    Ok(Json(InviteInfoResponse {
+        invite_code: user.id,
+        invite_count: count,
+        badge,
+        badge_label,
+        next_badge_at,
+    }))
 }
 
 // 用户授权一次学习提醒订阅 → 额度 +1
