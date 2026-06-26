@@ -177,7 +177,7 @@ pub async fn get_featured_by_poem(
     db: &PgPool,
     poem_id: i32,
     current_user_id: Option<&str>,
-    min_likes: i32,
+    _min_likes: i32,
 ) -> Result<Option<RecitationItem>, AppError> {
     let item = sqlx::query_as::<_, RecitationItem>(
         r#"
@@ -192,7 +192,7 @@ pub async fn get_featured_by_poem(
             r.like_count,
             EXISTS(
                 SELECT 1 FROM user_recitation_likes l
-                WHERE l.recitation_id = r.id AND l.user_id = $3
+                WHERE l.recitation_id = r.id AND l.user_id = $2
             ) AS liked_by_me,
             r.status,
             r.created_at
@@ -200,13 +200,11 @@ pub async fn get_featured_by_poem(
         JOIN users u ON u.id = r.user_id
         WHERE r.poem_id = $1
           AND r.status = 'public'
-          AND r.like_count >= $2
         ORDER BY r.like_count DESC, r.created_at DESC
         LIMIT 1
         "#,
     )
     .bind(poem_id)
-    .bind(min_likes)
     .bind(current_user_id.unwrap_or(""))
     .fetch_optional(db)
     .await

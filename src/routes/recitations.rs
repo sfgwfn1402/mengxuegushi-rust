@@ -180,6 +180,89 @@ pub async fn upload(
     Ok(Json(item))
 }
 
+/// AI 朗诵评分：接收录音 + poem_id，转调本机 FunASR 评分服务，返回字准确率结果。
+/// 不持久化录音，纯评分；前端拿到分数即时展示。
+pub async fn score(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(poem_id): Path<i32>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _user = current_user(&state, &headers).await?;
+
+    let poem = poem_store::find_poem(&state.db, poem_id as u32)
+        .await?
+        .ok_or_else(|| AppError::NotFound("poem not found".to_string()))?;
+
+    let mut audio_bytes: Option<Vec<u8>> = None;
+    let mut ext = "mp3".to_string();
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|err| AppError::BadRequest(format!("invalid multipart: {err}")))?
+    {
+        if field.name().unwrap_or_default() == "file" {
+            if let Some(file_name) = field.file_name().map(|v| v.to_string()) {
+                if let Some(candidate) = file_name.rsplit('.').next() {
+                    let clean = candidate.to_lowercase();
+                    if ["m4a", "mp3", "aac", "wav"].contains(&clean.as_str()) {
+                        ext = clean;
+                    }
+                }
+            }
+            let bytes = field
+                .bytes()
+                .await
+                .map_err(|err| AppError::BadRequest(format!("invalid audio file: {err}")))?;
+            if bytes.is_empty() {
+                return Err(AppError::BadRequest("empty audio file".to_string()));
+            }
+            if bytes.len() > 8 * 1024 * 1024 {
+                return Err(AppError::BadRequest("audio file too large".to_string()));
+            }
+            audio_bytes = Some(bytes.to_vec());
+        }
+    }
+    let audio_bytes = audio_bytes.ok_or_else(|| AppError::BadRequest("missing file".to_string()))?;
+
+    let score_url = state
+        .config
+        .funasr_score_url
+        .clone()
+        .ok_or_else(|| AppError::Internal("scoring service not configured".to_string()))?;
+
+    use base64::Engine as _;
+    let audio_base64 = base64::engine::general_purpose::STANDARD.encode(&audio_bytes);
+    let payload = serde_json::json!({
+        "expected": poem.content,
+        "audio_base64": audio_base64,
+        "ext": ext,
+    });
+
+    let resp = state
+        .http_client
+        .post(format!("{}/score", score_url.trim_end_matches('/')))
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|err| AppError::Internal(format!("scoring service unreachable: {err}")))?;
+
+    if !resp.status().is_success() {
+        let code = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AppError::Internal(format!(
+            "scoring service error {code}: {body}"
+        )));
+    }
+
+    let result: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|err| AppError::Internal(format!("invalid scoring response: {err}")))?;
+
+    Ok(Json(result))
+}
+
 pub async fn detail(
     State(state): State<AppState>,
     headers: HeaderMap,

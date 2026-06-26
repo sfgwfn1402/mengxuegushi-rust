@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub avatar_public_base_url: Option<String>,
     pub featured_recitation_min_likes: i32,
     pub admin_token: Option<String>,
+    pub funasr_score_url: Option<String>,
 }
 
 impl AppConfig {
@@ -76,10 +77,17 @@ impl AppConfig {
         let featured_recitation_min_likes = std::env::var("FEATURED_RECITATION_MIN_LIKES")
             .ok()
             .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(1000);
+            .unwrap_or(0);
         let admin_token = std::env::var("ADMIN_TOKEN")
             .ok()
             .filter(|value| !value.trim().is_empty());
+
+        // FunASR 朗诵评分服务地址；默认同机本地服务
+        let funasr_score_url = Some(
+            std::env::var("FUNASR_SCORE_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:8181".to_string()),
+        )
+        .filter(|value| !value.trim().is_empty());
 
         Ok(Self {
             port,
@@ -99,6 +107,7 @@ impl AppConfig {
             avatar_public_base_url,
             featured_recitation_min_likes,
             admin_token,
+            funasr_score_url,
         })
     }
 }

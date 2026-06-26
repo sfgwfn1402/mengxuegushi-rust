@@ -69,3 +69,17 @@ pub async fn popular_recitations(
     .await?;
     Ok(Json(PopularRecitationsResponse { items }))
 }
+
+/// 人气朗诵：最新100条 → 点赞前30 → 随机10条
+pub async fn hot_recitation_random_pick(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<PopularRecitationsResponse>, AppError> {
+    let user = current_user(&state, &headers).await.ok();
+    let items = home_store::hot_recitation_random_pick(
+        &state.db,
+        user.as_ref().map(|u| u.id.as_str()),
+    )
+    .await?;
+    Ok(Json(PopularRecitationsResponse { items }))
+}

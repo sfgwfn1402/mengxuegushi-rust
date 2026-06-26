@@ -23,6 +23,7 @@ pub fn api_routes() -> Router<AppState> {
         .route("/home/continue-learning", get(home::continue_learning))
         .route("/home/recommendations", get(home::recommendations))
         .route("/home/popular-recitations", get(home::popular_recitations))
+        .route("/home/hot-recitation-pick", get(home::hot_recitation_random_pick))
         .route("/works/qrcode", get(qrcode::work_qrcode))
         .route("/admin/feedback", get(admin::list_feedback))
         .route(
@@ -52,6 +53,10 @@ pub fn api_routes() -> Router<AppState> {
             get(recitations::list_top),
         )
         .route("/poems/{poem_id}/recitations", post(recitations::upload))
+        .route(
+            "/poems/{poem_id}/recitations/score",
+            post(recitations::score),
+        )
         .route("/poems/{poem_id}/artworks", post(artworks::upload))
         .route("/artworks", get(artworks::list))
         .route("/artworks/{artwork_id}/image", get(artworks::image))

@@ -219,7 +219,7 @@ pub async fn popular_recitations(
         FROM user_recitations r
         JOIN poems p ON p.id = r.poem_id
         WHERE r.status = 'public'
-        ORDER BY r.like_count DESC, r.created_at DESC
+        ORDER BY (r.like_count * 100 + EXTRACT(EPOCH FROM r.created_at) / 21600) DESC, r.created_at DESC
         LIMIT $1 OFFSET $2
         "#,
     )
@@ -242,4 +242,66 @@ pub async fn popular_recitations(
     }
 
     Ok(items)
+}
+
+/// 取最新100条公开朗诵 → 点赞数前30 → 随机选10条
+pub async fn hot_recitation_random_pick(
+    db: &PgPool,
+    current_user_id: Option<&str>,
+) -> Result<Vec<PopularRecitationItem>, AppError> {
+    // 第一步：取最新的100条公开朗诵
+    let rows = sqlx::query_as::<_, (String, String, String, String)>(
+        r#"
+        SELECT r.id, p.title, p.author, p.dynasty
+        FROM user_recitations r
+        JOIN poems p ON p.id = r.poem_id
+        WHERE r.status = 'public'
+        ORDER BY r.created_at DESC
+        LIMIT 100
+        "#,
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 第二步：组装完整记录
+    let mut items = Vec::new();
+    for (recitation_id, poem_title, poem_author, poem_dynasty) in rows {
+        let recitation: RecitationItem =
+            recitation_store::get_recitation(db, &recitation_id, current_user_id).await?;
+        items.push(PopularRecitationItem {
+            recitation,
+            poem_title,
+            poem_author,
+            poem_dynasty,
+        });
+    }
+
+    // 第三步：按 like_count 降序
+    items.sort_by(|a, b| b.recitation.like_count.cmp(&a.recitation.like_count));
+
+    // 第四步：取前30
+    let pool_size = 30usize.min(items.len());
+    let mut pool: Vec<_> = items.drain(..pool_size).collect();
+
+    // 第五步：Fisher-Yates 随机洗牌，取前10
+    // 使用系统纳秒时间戳作为随机种子
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let mut state = seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(0xBF58476D1CE4E5B9);
+    for i in (1..pool.len()).rev() {
+        state = state.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(1);
+        let j = (state >> 33) as usize % (i + 1);
+        pool.swap(i, j);
+    }
+    let count = 10usize.min(pool.len());
+    pool.truncate(count);
+
+    Ok(pool)
 }
