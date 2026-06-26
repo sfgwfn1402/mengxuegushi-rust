@@ -19,6 +19,7 @@ use crate::AppState;
 
 pub fn api_routes() -> Router<AppState> {
     Router::new()
+        .route("/home/community-stats", get(home::community_stats))
         .route("/home/today-poem", get(home::today_poem))
         .route("/home/continue-learning", get(home::continue_learning))
         .route("/home/recommendations", get(home::recommendations))
@@ -94,6 +95,8 @@ pub fn api_routes() -> Router<AppState> {
         .route("/me/avatar", post(me::upload_avatar))
         .route("/me/stats", get(me::stats))
         .route("/me/checkin", post(me::checkin))
+        .route("/me/reminder-subscribe", post(me::subscribe_reminder))
+        .route("/admin/send-reminders", post(admin::send_reminders))
         .route("/me/tasks", post(me::complete_task))
         .route("/me/clear-data", post(me::clear_data))
         .route("/me/progress", get(me::list_progress))

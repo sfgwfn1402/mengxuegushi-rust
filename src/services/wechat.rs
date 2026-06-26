@@ -131,3 +131,49 @@ pub async fn get_wxacode(state: &AppState, path: &str) -> Result<Vec<u8>, AppErr
 
     Ok(bytes.to_vec())
 }
+
+const SUBSCRIBE_SEND_URL: &str = "https://api.weixin.qq.com/cgi-bin/message/subscribe/send";
+const REMINDER_TEMPLATE_ID: &str = "fzZRTV2ni_DCk03oCTkFz5bRsJ5bzEbaOdl09q3zp3g";
+
+/// 发送"学习提醒"订阅消息。模板字段：thing1=打卡活动, phrase6=学习进度(限5字), thing3=备注
+pub async fn send_study_reminder(
+    state: &AppState,
+    openid: &str,
+    learned_count: i64,
+) -> Result<(), AppError> {
+    let token = access_token(state).await?;
+    let progress = format!("{}首", learned_count); // phrase6 最多5字
+    let body = json!({
+        "touser": openid,
+        "template_id": REMINDER_TEMPLATE_ID,
+        "page": "pages/index/index",
+        "miniprogram_state": "formal",
+        "data": {
+            "thing1": { "value": "萌学古诗每日打卡" },
+            "phrase6": { "value": progress },
+            "thing3": { "value": "今天还没读诗，来读一首吧" }
+        }
+    });
+    let resp = state
+        .http_client
+        .post(SUBSCRIBE_SEND_URL)
+        .query(&[("access_token", token.as_str())])
+        .json(&body)
+        .send()
+        .await
+        .map_err(|err| AppError::Upstream(err.to_string()))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|err| AppError::Upstream(err.to_string()))?;
+    let code = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("errcode").and_then(|c| c.as_i64()))
+        .unwrap_or(-1);
+    if code != 0 {
+        return Err(AppError::Upstream(format!(
+            "subscribe send failed: {text}"
+        )));
+    }
+    Ok(())
+}

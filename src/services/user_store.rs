@@ -260,3 +260,47 @@ fn row_to_progress(row: sqlx::postgres::PgRow) -> Result<UserPoemProgress, AppEr
         last_learned_at: row.get("last_learned_at"),
     })
 }
+
+/// 用户授权订阅一次 → 提醒额度 +1（上限 14，避免无限攒）
+pub async fn add_reminder_credit(db: &PgPool, user_id: &str) -> Result<i32, AppError> {
+    let credits: i32 = sqlx::query_scalar(
+        "UPDATE users SET reminder_credits = LEAST(reminder_credits + 1, 14) WHERE id = $1 RETURNING reminder_credits",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(credits)
+}
+
+/// 待提醒用户：有额度、今天没提醒过、今天没打卡。返回 (用户id, openid, 已学会数)
+pub async fn users_to_remind(db: &PgPool) -> Result<Vec<(String, String, i64)>, AppError> {
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        r#"
+        SELECT u.id, u.openid,
+               (SELECT COUNT(*) FROM user_poem_progress p WHERE p.user_id = u.id AND p.learned = TRUE)::BIGINT
+        FROM users u
+        WHERE u.reminder_credits > 0
+          AND (u.last_reminded_at IS NULL OR u.last_reminded_at < CURRENT_DATE)
+          AND NOT EXISTS (
+              SELECT 1 FROM user_checkins c WHERE c.user_id = u.id AND c.checkin_date = CURRENT_DATE
+          )
+        "#,
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(rows)
+}
+
+/// 发送提醒后：额度 -1，记录今天已提醒
+pub async fn mark_reminded(db: &PgPool, user_id: &str) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE users SET reminder_credits = GREATEST(reminder_credits - 1, 0), last_reminded_at = CURRENT_DATE WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(db)
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(())
+}

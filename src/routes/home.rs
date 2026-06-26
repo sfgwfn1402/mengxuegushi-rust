@@ -7,11 +7,26 @@ use serde::Deserialize;
 
 use crate::{
     error::AppError,
-    models::home::{HomePoemResponse, HomeRecommendationsResponse, PopularRecitationsResponse},
+    models::home::{
+        CommunityStatsResponse, HomePoemResponse, HomeRecommendationsResponse,
+        PopularRecitationsResponse,
+    },
     routes::me::current_user,
     services::home_store,
     AppState,
 };
+
+// 公开接口，无需登录：首页人气展示
+pub async fn community_stats(
+    State(state): State<AppState>,
+) -> Result<Json<CommunityStatsResponse>, AppError> {
+    let (learners, today_lit, total_lit) = home_store::community_stats(&state.db).await?;
+    Ok(Json(CommunityStatsResponse {
+        learners,
+        today_lit,
+        total_lit,
+    }))
+}
 
 pub async fn today_poem(
     State(state): State<AppState>,

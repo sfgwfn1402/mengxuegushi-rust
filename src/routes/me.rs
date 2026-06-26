@@ -145,6 +145,16 @@ pub async fn checkin(
     Ok(Json(activity_store::checkin(&state.db, &user.id).await?))
 }
 
+// 用户授权一次学习提醒订阅 → 额度 +1
+pub async fn subscribe_reminder(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    let credits = user_store::add_reminder_credit(&state.db, &user.id).await?;
+    Ok(Json(serde_json::json!({ "credits": credits })))
+}
+
 pub async fn complete_task(
     State(state): State<AppState>,
     headers: HeaderMap,

@@ -39,6 +39,21 @@ async fn main() -> anyhow::Result<()> {
     // 容易误封正常用户。静态媒体在 ip_guard 中跳过，这里只兜底限制异常 API 风暴。
     let ip_guard = IpGuard::new(Duration::from_secs(60), 600, Duration::from_secs(300));
 
+    // 学习提醒定时任务：每天 UTC 11 点（北京 19:00）扫描发送。
+    // 半小时检查一次，命中该小时即发；per-user last_reminded_at 保证当天只发一次。
+    {
+        let sched_state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(1800)).await;
+                let hour = chrono::Timelike::hour(&chrono::Utc::now());
+                if hour == 11 {
+                    crate::services::reminder::send_daily_reminders(&sched_state).await;
+                }
+            }
+        });
+    }
+
     let app = Router::new()
         .nest("/api", routes::api_routes())
         .route(

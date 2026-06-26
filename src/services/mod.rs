@@ -8,4 +8,5 @@ pub mod wechat;
 pub mod home_store;
 pub mod minio_store;
 pub mod recitation_store;
+pub mod reminder;
 pub mod theme_store;

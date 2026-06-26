@@ -305,3 +305,19 @@ pub async fn hot_recitation_random_pick(
 
     Ok(pool)
 }
+
+/// 社区聚合数据：在学小朋友数、今日点亮、累计点亮（首页人气展示，真实数据）
+pub async fn community_stats(db: &PgPool) -> Result<(i64, i64, i64), AppError> {
+    let row = sqlx::query_as::<_, (i64, i64, i64)>(
+        r#"
+        SELECT
+            (SELECT COUNT(DISTINCT user_id) FROM user_poem_progress WHERE learned = TRUE)::BIGINT,
+            (SELECT COUNT(*) FROM user_poem_progress WHERE learned = TRUE AND last_learned_at::date = CURRENT_DATE)::BIGINT,
+            (SELECT COUNT(*) FROM user_poem_progress WHERE learned = TRUE)::BIGINT
+        "#,
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    Ok(row)
+}

@@ -26,3 +26,10 @@ pub struct PopularRecitationItem {
 pub struct PopularRecitationsResponse {
     pub items: Vec<PopularRecitationItem>,
 }
+
+#[derive(Debug, Serialize)]
+pub struct CommunityStatsResponse {
+    pub learners: i64,
+    pub today_lit: i64,
+    pub total_lit: i64,
+}

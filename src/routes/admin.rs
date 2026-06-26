@@ -10,7 +10,7 @@ use crate::{
         user::User,
     },
     routes::me,
-    services::{artwork_store, feedback_store, recitation_store},
+    services::{artwork_store, feedback_store, recitation_store, reminder},
     AppState,
 };
 
@@ -52,6 +52,16 @@ async fn current_admin(state: &AppState, headers: &HeaderMap) -> Result<User, Ap
         avatar_url: None,
         role: "admin".to_string(),
     })
+}
+
+// 手动触发学习提醒发送（管理员/测试用，定时任务也调同一逻辑）
+pub async fn send_reminders(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    current_admin(&state, &headers).await?;
+    let sent = reminder::send_daily_reminders(&state).await;
+    Ok(Json(serde_json::json!({ "sent": sent })))
 }
 
 fn normalize_status(value: &str) -> Result<&'static str, AppError> {
