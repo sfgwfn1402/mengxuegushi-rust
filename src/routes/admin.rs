@@ -54,6 +54,24 @@ async fn current_admin(state: &AppState, headers: &HeaderMap) -> Result<User, Ap
     })
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AnalyticsQuery {
+    pub days: Option<i64>,
+}
+
+// 数据看板：核心事件计数、活跃用户、每日活跃、热门诗
+pub async fn analytics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<AnalyticsQuery>,
+) -> Result<Json<crate::models::event::AnalyticsResponse>, AppError> {
+    current_admin(&state, &headers).await?;
+    let days = query.days.unwrap_or(7);
+    Ok(Json(
+        crate::services::event_store::analytics(&state.db, days).await?,
+    ))
+}
+
 // 手动触发学习提醒发送（管理员/测试用，定时任务也调同一逻辑）
 pub async fn send_reminders(
     State(state): State<AppState>,

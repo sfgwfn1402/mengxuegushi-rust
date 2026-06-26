@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod artwork;
 pub mod auth;
+pub mod event;
 pub mod feedback;
 pub mod invite;
 pub mod poem;

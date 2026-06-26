@@ -146,6 +146,22 @@ pub async fn checkin(
     Ok(Json(activity_store::checkin(&state.db, &user.id).await?))
 }
 
+// 事件埋点上报：可选登录态，登录则记 user_id，否则记 null。永不因鉴权失败而拒绝。
+pub async fn track_events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<crate::models::event::TrackEventsRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if payload.events.is_empty() {
+        return Ok(Json(serde_json::json!({ "inserted": 0 })));
+    }
+    let user = current_user(&state, &headers).await.ok();
+    let user_id = user.as_ref().map(|u| u.id.as_str());
+    let inserted =
+        crate::services::event_store::insert_events(&state.db, user_id, &payload.events).await?;
+    Ok(Json(serde_json::json!({ "inserted": inserted })))
+}
+
 // 公开接口：被邀请者落地时按邀请码展示邀请人昵称（仅返回昵称，无敏感信息）
 pub async fn inviter_name(
     State(state): State<AppState>,
