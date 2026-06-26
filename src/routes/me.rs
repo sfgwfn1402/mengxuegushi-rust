@@ -146,6 +146,18 @@ pub async fn checkin(
     Ok(Json(activity_store::checkin(&state.db, &user.id).await?))
 }
 
+// 公开接口：被邀请者落地时按邀请码展示邀请人昵称（仅返回昵称，无敏感信息）
+pub async fn inviter_name(
+    State(state): State<AppState>,
+    Path(code): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let nickname = user_store::find_user_by_id(&state.db, code.trim())
+        .await?
+        .and_then(|u| u.nickname)
+        .filter(|n| !n.trim().is_empty());
+    Ok(Json(serde_json::json!({ "nickname": nickname })))
+}
+
 pub async fn invite_info(
     State(state): State<AppState>,
     headers: HeaderMap,
