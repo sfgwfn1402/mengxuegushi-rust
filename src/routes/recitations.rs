@@ -349,8 +349,16 @@ pub async fn delete_recitation(
     Path(recitation_id): Path<String>,
 ) -> Result<Json<DeleteRecitationResponse>, AppError> {
     let user = current_user(&state, &headers).await?;
+    let object_path = recitation_store::get_object_path(&state.db, &recitation_id).await.ok();
     let deleted =
         recitation_store::soft_delete_recitation(&state.db, &recitation_id, &user.id).await?;
+    if deleted {
+        if let Some(p) = object_path {
+            if let Err(err) = minio_store::delete_object(&state.config, &p).await {
+                tracing::warn!(object = %p, error = %err, "recitation minio delete failed");
+            }
+        }
+    }
     Ok(Json(DeleteRecitationResponse { deleted }))
 }
 

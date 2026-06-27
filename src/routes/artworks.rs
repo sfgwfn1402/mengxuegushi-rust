@@ -260,9 +260,16 @@ pub async fn delete_artwork(
     Path(artwork_id): Path<String>,
 ) -> Result<Json<DeleteArtworkResponse>, AppError> {
     let user = current_user(&state, &headers).await?;
-    Ok(Json(
-        artwork_store::soft_delete(&state.db, &artwork_id, &user.id).await?,
-    ))
+    let object_path = artwork_store::get_object_path(&state.db, &artwork_id).await.ok();
+    let resp = artwork_store::soft_delete(&state.db, &artwork_id, &user.id).await?;
+    if resp.deleted {
+        if let Some(p) = object_path {
+            if let Err(err) = minio_store::delete_object(&state.config, &p).await {
+                tracing::warn!(object = %p, error = %err, "artwork minio delete failed");
+            }
+        }
+    }
+    Ok(Json(resp))
 }
 
 async fn ensure_poem_exists(state: &AppState, poem_id: i32) -> Result<(), AppError> {
