@@ -1,5 +1,4 @@
 use sqlx::{PgPool, Row};
-use uuid::Uuid;
 
 use crate::{
     error::AppError,
@@ -26,19 +25,19 @@ fn row_to_moment(row: sqlx::postgres::PgRow) -> Result<MomentItem, AppError> {
 
 pub async fn create_moment(
     db: &PgPool,
+    id: &str,
     user_id: &str,
     content: &str,
     image_url: &str,
     object_path: &str,
 ) -> Result<MomentItem, AppError> {
-    let id = Uuid::new_v4().to_string();
     sqlx::query(
         r#"
         INSERT INTO moments (id, user_id, content, image_url, object_path, status)
         VALUES ($1, $2, $3, $4, $5, 'submitted')
         "#,
     )
-    .bind(&id)
+    .bind(id)
     .bind(user_id)
     .bind(content)
     .bind(image_url)
@@ -47,7 +46,7 @@ pub async fn create_moment(
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
 
-    get_moment(db, &id, Some(user_id)).await
+    get_moment(db, id, Some(user_id)).await
 }
 
 pub async fn list_public(

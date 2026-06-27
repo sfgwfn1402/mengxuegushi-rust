@@ -108,17 +108,32 @@ pub async fn create(
     let object_path = format!("moments/{mid}.{ext}");
     minio_store::put_object(&state.config, &object_path, image_bytes, &content_type).await?;
 
-    let image_url = if let Some(base) = state.config.avatar_public_base_url.as_ref() {
-        let base = base.trim_end_matches('/').replace("/avatars", "/moments-media");
-        let relative = object_path.trim_start_matches("moments/");
-        format!("{base}/{relative}")
-    } else {
-        format!("/moments-media/{}", object_path.trim_start_matches("moments/"))
-    };
+    // 走已被 Nginx 代理的 /api 路径取图，避免新增 /moments-media 未配置导致 404
+    let image_url = format!("/api/moments/{mid}/image");
 
     Ok(Json(
-        moment_store::create_moment(&state.db, &user.id, &content, &image_url, &object_path).await?,
+        moment_store::create_moment(&state.db, &mid, &user.id, &content, &image_url, &object_path)
+            .await?,
     ))
+}
+
+// 公开取图（img src 无法带鉴权头）
+pub async fn image(
+    State(state): State<AppState>,
+    Path(moment_id): Path<String>,
+) -> Result<Response<Body>, AppError> {
+    let object_path = moment_store::get_object_path(&state.db, &moment_id).await?;
+    let (bytes, content_type) = minio_store::get_object(&state.config, &object_path).await?;
+    let mut response = Response::new(Body::from(bytes));
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type).map_err(|err| AppError::Internal(err.to_string()))?,
+    );
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000"),
+    );
+    Ok(response)
 }
 
 pub async fn like(
