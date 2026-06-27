@@ -94,6 +94,15 @@ pub async fn upload_image(
     Ok(Json(serde_json::json!({ "object_path": object_path })))
 }
 
+pub async fn list_mine(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<MomentListResponse>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    let items = moment_store::list_mine(&state.db, &user.id, 100).await?;
+    Ok(Json(MomentListResponse { items }))
+}
+
 pub async fn create(
     State(state): State<AppState>,
     headers: HeaderMap,

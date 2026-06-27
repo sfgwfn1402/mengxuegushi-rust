@@ -120,6 +120,30 @@ pub async fn list_public(
     rows.into_iter().map(row_to_moment).collect()
 }
 
+pub async fn list_mine(
+    db: &PgPool,
+    user_id: &str,
+    limit: i64,
+) -> Result<Vec<MomentItem>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
+               m.like_count, m.status, m.created_at, FALSE AS liked_by_me
+        FROM moments m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.user_id = $1 AND m.status IN ('submitted','public','rejected')
+        ORDER BY m.created_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    rows.into_iter().map(row_to_moment).collect()
+}
+
 pub async fn get_moment(
     db: &PgPool,
     moment_id: &str,
