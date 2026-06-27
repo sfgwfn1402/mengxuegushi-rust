@@ -146,12 +146,12 @@ pub async fn send_study_reminder(
     let body = json!({
         "touser": openid,
         "template_id": REMINDER_TEMPLATE_ID,
-        "page": "pages/index/index",
+        "page": "pages/listen/listen",
         "miniprogram_state": "formal",
         "data": {
-            "thing1": { "value": "萌学古诗每日打卡" },
+            "thing1": { "value": "萌学古诗·睡前听诗" },
             "phrase6": { "value": progress },
-            "thing3": { "value": "今天还没读诗，来读一首吧" }
+            "thing3": { "value": "睡前听首诗，放着就好啦" }
         }
     });
     let resp = state
