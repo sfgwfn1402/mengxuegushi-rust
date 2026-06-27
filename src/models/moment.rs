@@ -10,6 +10,7 @@ pub struct MomentItem {
     pub content: String,
     pub image_url: String,
     pub images: Vec<String>,
+    pub object_paths: Vec<String>,
     pub like_count: i32,
     pub liked_by_me: bool,
     pub status: String,

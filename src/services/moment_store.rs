@@ -11,7 +11,11 @@ use crate::{
 fn row_to_moment(row: sqlx::postgres::PgRow) -> Result<MomentItem, AppError> {
     let id: String = row.get("id");
     let paths: serde_json::Value = row.try_get("object_paths").unwrap_or(serde_json::json!([]));
-    let n = paths.as_array().map(|a| a.len()).unwrap_or(0);
+    let object_paths: Vec<String> = paths
+        .as_array()
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let n = object_paths.len();
     let images: Vec<String> = if n > 0 {
         (0..n).map(|i| format!("/api/moments/{id}/image/{i}")).collect()
     } else {
@@ -27,6 +31,7 @@ fn row_to_moment(row: sqlx::postgres::PgRow) -> Result<MomentItem, AppError> {
         content: row.get("content"),
         image_url,
         images,
+        object_paths,
         like_count: row.get("like_count"),
         liked_by_me: row.get("liked_by_me"),
         status: row.get("status"),
@@ -168,6 +173,48 @@ pub async fn get_moment(
     row_to_moment(row)
 }
 
+
+// 编辑动态：仅限本人、且状态为 驳回/审核中/已公开。更新后重新进入审核(submitted)。
+// 返回 (更新后动态, 被移除的旧对象键)，供路由删除 MinIO 文件。
+pub async fn update_moment(
+    db: &PgPool,
+    moment_id: &str,
+    user_id: &str,
+    content: &str,
+    object_paths: &[String],
+) -> Result<(MomentItem, Vec<String>), AppError> {
+    let old = owned_object_paths(db, moment_id, user_id).await?;
+    let first = object_paths.first().cloned().unwrap_or_default();
+    let paths_json = serde_json::json!(object_paths);
+    let affected = sqlx::query(
+        r#"
+        UPDATE moments
+        SET content = $3, image_url = $4, object_path = $5, object_paths = $6, status = 'submitted'
+        WHERE id = $1 AND user_id = $2 AND status IN ('rejected','submitted','public')
+        "#,
+    )
+    .bind(moment_id)
+    .bind(user_id)
+    .bind(content)
+    .bind(format!("/api/moments/{moment_id}/image/0"))
+    .bind(&first)
+    .bind(&paths_json)
+    .execute(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?
+    .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::BadRequest("不可编辑（非本人或状态不允许）".to_string()));
+    }
+    // 被移除的旧图(old - new)
+    let removed: Vec<String> = old
+        .into_iter()
+        .filter(|p| !object_paths.iter().any(|n| n == p))
+        .collect();
+    let item = get_moment(db, moment_id, Some(user_id)).await?;
+    Ok((item, removed))
+}
 
 // 取本人这条动态的所有图片对象键（供删除 MinIO 文件）
 pub async fn owned_object_paths(

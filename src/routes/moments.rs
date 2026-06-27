@@ -160,6 +160,36 @@ async fn serve_image(
     Ok(response)
 }
 
+// 编辑动态(驳回/审核中/已公开均可)，更新内容+图片，重新进入审核
+pub async fn edit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(moment_id): Path<String>,
+    Json(payload): Json<crate::models::moment::CreateMomentRequest>,
+) -> Result<Json<MomentItem>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    let content: String = payload.content.trim().chars().take(300).collect();
+    let mut paths: Vec<String> = payload
+        .object_paths
+        .into_iter()
+        .filter(|p| p.starts_with("moments/") && !p.contains("..") && !p.contains('\\'))
+        .take(6)
+        .collect();
+    if paths.is_empty() {
+        return Err(AppError::BadRequest("at least one image required".to_string()));
+    }
+    paths.dedup();
+    let (item, removed) =
+        moment_store::update_moment(&state.db, &moment_id, &user.id, &content, &paths).await?;
+    // 删掉被移除的旧图(best-effort)
+    for p in removed {
+        if let Err(err) = minio_store::delete_object(&state.config, &p).await {
+            tracing::warn!(object = %p, error = %err, "moment edit minio delete failed");
+        }
+    }
+    Ok(Json(item))
+}
+
 pub async fn like(
     State(state): State<AppState>,
     headers: HeaderMap,

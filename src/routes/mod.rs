@@ -108,7 +108,7 @@ pub fn api_routes() -> Router<AppState> {
         .route("/moments/{moment_id}/image/{idx}", get(moments::image_idx))
         .route(
             "/moments/{moment_id}",
-            axum::routing::delete(moments::delete_moment),
+            axum::routing::put(moments::edit).delete(moments::delete_moment),
         )
         .route(
             "/moments/{moment_id}/like",
