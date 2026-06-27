@@ -76,6 +76,10 @@ async fn main() -> anyhow::Result<()> {
             "/artworks/{*path}",
             axum::routing::get(routes::artworks::media),
         )
+        .route(
+            "/moments-media/{*path}",
+            axum::routing::get(routes::moments::media),
+        )
         .route("/health", axum::routing::get(routes::health::health_check))
         .route_layer(middleware::from_fn_with_state(
             ip_guard,

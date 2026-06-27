@@ -82,6 +82,40 @@ pub async fn send_reminders(
     Ok(Json(serde_json::json!({ "sent": sent })))
 }
 
+// 亲子广场动态审核
+pub async fn list_moments(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<crate::models::artwork::AdminArtworkQuery>,
+) -> Result<Json<crate::models::moment::AdminMomentListResponse>, AppError> {
+    current_admin(&state, &headers).await?;
+    let (total, items) = crate::services::moment_store::list_admin(
+        &state.db,
+        query.page(),
+        query.page_size(),
+        query.status_filter().as_deref(),
+    )
+    .await?;
+    Ok(Json(crate::models::moment::AdminMomentListResponse { total, items }))
+}
+
+pub async fn review_moment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(moment_id): Path<String>,
+    Json(payload): Json<ReviewRequest>,
+) -> Result<Json<crate::models::moment::DeleteMomentResponse>, AppError> {
+    current_admin(&state, &headers).await?;
+    let status = match payload.status.trim() {
+        "public" => "public",
+        "rejected" => "rejected",
+        _ => return Err(AppError::BadRequest("invalid review status".to_string())),
+    };
+    Ok(Json(
+        crate::services::moment_store::admin_set_status(&state.db, &moment_id, status).await?,
+    ))
+}
+
 fn normalize_status(value: &str) -> Result<&'static str, AppError> {
     match value.trim() {
         "public" => Ok("public"),

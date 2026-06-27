@@ -5,6 +5,7 @@ pub mod feedback;
 pub mod health;
 pub mod me;
 pub mod media;
+pub mod moments;
 pub mod poems;
 pub mod qrcode;
 pub mod recitations;
@@ -100,6 +101,17 @@ pub fn api_routes() -> Router<AppState> {
         .route("/invite/inviter/{code}", get(me::inviter_name))
         .route("/events", post(me::track_events))
         .route("/admin/analytics", get(admin::analytics))
+        .route("/moments", get(moments::list).post(moments::create))
+        .route(
+            "/moments/{moment_id}",
+            axum::routing::delete(moments::delete_moment),
+        )
+        .route(
+            "/moments/{moment_id}/like",
+            post(moments::like).delete(moments::unlike),
+        )
+        .route("/admin/moments", get(admin::list_moments))
+        .route("/admin/moments/{moment_id}/review", post(admin::review_moment))
         .route("/admin/send-reminders", post(admin::send_reminders))
         .route("/me/tasks", post(me::complete_task))
         .route("/me/clear-data", post(me::clear_data))
