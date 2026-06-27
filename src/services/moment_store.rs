@@ -9,13 +9,24 @@ use crate::{
 };
 
 fn row_to_moment(row: sqlx::postgres::PgRow) -> Result<MomentItem, AppError> {
+    let id: String = row.get("id");
+    let paths: serde_json::Value = row.try_get("object_paths").unwrap_or(serde_json::json!([]));
+    let n = paths.as_array().map(|a| a.len()).unwrap_or(0);
+    let images: Vec<String> = if n > 0 {
+        (0..n).map(|i| format!("/api/moments/{id}/image/{i}")).collect()
+    } else {
+        // 兼容旧单图行
+        vec![format!("/api/moments/{id}/image")]
+    };
+    let image_url = images.first().cloned().unwrap_or_default();
     Ok(MomentItem {
-        id: row.get("id"),
+        id,
         user_id: row.get("user_id"),
         nickname: row.get("nickname"),
         avatar_url: row.get("avatar_url"),
         content: row.get("content"),
-        image_url: row.get("image_url"),
+        image_url,
+        images,
         like_count: row.get("like_count"),
         liked_by_me: row.get("liked_by_me"),
         status: row.get("status"),
@@ -28,25 +39,57 @@ pub async fn create_moment(
     id: &str,
     user_id: &str,
     content: &str,
-    image_url: &str,
-    object_path: &str,
+    object_paths: &[String],
 ) -> Result<MomentItem, AppError> {
+    let first = object_paths.first().cloned().unwrap_or_default();
+    let paths_json = serde_json::json!(object_paths);
     sqlx::query(
         r#"
-        INSERT INTO moments (id, user_id, content, image_url, object_path, status)
-        VALUES ($1, $2, $3, $4, $5, 'submitted')
+        INSERT INTO moments (id, user_id, content, image_url, object_path, object_paths, status)
+        VALUES ($1, $2, $3, $4, $5, $6, 'submitted')
         "#,
     )
     .bind(id)
     .bind(user_id)
     .bind(content)
-    .bind(image_url)
-    .bind(object_path)
+    .bind(format!("/api/moments/{id}/image/0"))
+    .bind(&first)
+    .bind(&paths_json)
     .execute(db)
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
 
     get_moment(db, id, Some(user_id)).await
+}
+
+// 取第 idx 张图的对象键（兼容旧单图行）
+pub async fn get_image_object_path(
+    db: &PgPool,
+    moment_id: &str,
+    idx: usize,
+) -> Result<String, AppError> {
+    let row = sqlx::query(
+        "SELECT object_path, object_paths FROM moments WHERE id = $1 AND status IN ('submitted','public')",
+    )
+    .bind(moment_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?
+    .ok_or_else(|| AppError::NotFound(format!("moment {moment_id}")))?;
+
+    let paths: serde_json::Value = row.try_get("object_paths").unwrap_or(serde_json::json!([]));
+    if let Some(arr) = paths.as_array() {
+        if let Some(p) = arr.get(idx).and_then(|v| v.as_str()) {
+            return Ok(p.to_string());
+        }
+    }
+    if idx == 0 {
+        let single: String = row.get("object_path");
+        if !single.is_empty() {
+            return Ok(single);
+        }
+    }
+    Err(AppError::NotFound(format!("moment image {moment_id}/{idx}")))
 }
 
 pub async fn list_public(
@@ -57,7 +100,7 @@ pub async fn list_public(
 ) -> Result<Vec<MomentItem>, AppError> {
     let rows = sqlx::query(
         r#"
-        SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url,
+        SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
                m.like_count, m.status, m.created_at,
                EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $1) AS liked_by_me
         FROM moments m
@@ -84,7 +127,7 @@ pub async fn get_moment(
 ) -> Result<MomentItem, AppError> {
     let row = sqlx::query(
         r#"
-        SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url,
+        SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
                m.like_count, m.status, m.created_at,
                EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $2) AS liked_by_me
         FROM moments m
@@ -101,14 +144,6 @@ pub async fn get_moment(
     row_to_moment(row)
 }
 
-pub async fn get_object_path(db: &PgPool, moment_id: &str) -> Result<String, AppError> {
-    sqlx::query_scalar("SELECT object_path FROM moments WHERE id = $1 AND status IN ('submitted','public')")
-        .bind(moment_id)
-        .fetch_optional(db)
-        .await
-        .map_err(|err| AppError::Internal(err.to_string()))?
-        .ok_or_else(|| AppError::NotFound(format!("moment {moment_id}")))
-}
 
 pub async fn soft_delete(
     db: &PgPool,
@@ -168,7 +203,7 @@ pub async fn list_admin(
                 .map_err(|err| AppError::Internal(err.to_string()))?;
             let rows = sqlx::query(
                 r#"
-                SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url,
+                SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
                        m.like_count, m.status, m.created_at, FALSE AS liked_by_me
                 FROM moments m JOIN users u ON u.id = m.user_id
                 WHERE m.status = $1
@@ -193,7 +228,7 @@ pub async fn list_admin(
             .map_err(|err| AppError::Internal(err.to_string()))?;
             let rows = sqlx::query(
                 r#"
-                SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url,
+                SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
                        m.like_count, m.status, m.created_at, FALSE AS liked_by_me
                 FROM moments m JOIN users u ON u.id = m.user_id
                 WHERE m.status IN ('submitted','public','rejected')

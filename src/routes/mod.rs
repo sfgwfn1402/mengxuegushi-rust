@@ -102,7 +102,9 @@ pub fn api_routes() -> Router<AppState> {
         .route("/events", post(me::track_events))
         .route("/admin/analytics", get(admin::analytics))
         .route("/moments", get(moments::list).post(moments::create))
+        .route("/moments/upload-image", post(moments::upload_image))
         .route("/moments/{moment_id}/image", get(moments::image))
+        .route("/moments/{moment_id}/image/{idx}", get(moments::image_idx))
         .route(
             "/moments/{moment_id}",
             axum::routing::delete(moments::delete_moment),

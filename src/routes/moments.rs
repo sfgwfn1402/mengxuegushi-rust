@@ -42,87 +42,102 @@ pub async fn list(
     Ok(Json(MomentListResponse { items }))
 }
 
-pub async fn create(
+// 单图上传 → 返回 object_path，前端攒齐后再 create
+pub async fn upload_image(
     State(state): State<AppState>,
     headers: HeaderMap,
     mut multipart: Multipart,
-) -> Result<Json<MomentItem>, AppError> {
-    let user = current_user(&state, &headers).await?;
+) -> Result<Json<serde_json::Value>, AppError> {
+    current_user(&state, &headers).await?;
     if !minio_store::enabled(&state.config) {
         return Err(AppError::Internal("minio config missing".to_string()));
     }
-
-    let mut content = String::new();
     let mut image_bytes: Option<Vec<u8>> = None;
     let mut ext = "jpg".to_string();
     let mut content_type = "image/jpeg".to_string();
-
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|err| AppError::BadRequest(format!("invalid multipart: {err}")))?
     {
-        match field.name().unwrap_or_default().to_string().as_str() {
-            "content" => {
-                content = field
-                    .text()
-                    .await
-                    .map_err(|err| AppError::BadRequest(format!("invalid content: {err}")))?
-                    .trim()
-                    .chars()
-                    .take(300)
-                    .collect();
-            }
-            "file" => {
-                if let Some(file_name) = field.file_name().map(|v| v.to_string()) {
-                    if let Some(c) = file_name.rsplit('.').next() {
-                        let clean = c.to_lowercase();
-                        if ["jpg", "jpeg", "png", "webp"].contains(&clean.as_str()) {
-                            ext = clean;
-                        }
-                    }
-                }
-                if let Some(ct) = field.content_type().map(|v| v.to_string()) {
-                    if ["image/jpeg", "image/png", "image/webp"].contains(&ct.as_str()) {
-                        content_type = ct;
-                    }
-                }
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|err| AppError::BadRequest(format!("invalid file: {err}")))?;
-                if bytes.is_empty() {
-                    return Err(AppError::BadRequest("empty file".to_string()));
-                }
-                if bytes.len() > 8 * 1024 * 1024 {
-                    return Err(AppError::BadRequest("file too large".to_string()));
-                }
-                image_bytes = Some(bytes.to_vec());
-            }
-            _ => {}
+        if field.name().unwrap_or_default() != "file" {
+            continue;
         }
+        if let Some(file_name) = field.file_name().map(|v| v.to_string()) {
+            if let Some(c) = file_name.rsplit('.').next() {
+                let clean = c.to_lowercase();
+                if ["jpg", "jpeg", "png", "webp"].contains(&clean.as_str()) {
+                    ext = clean;
+                }
+            }
+        }
+        if let Some(ct) = field.content_type().map(|v| v.to_string()) {
+            if ["image/jpeg", "image/png", "image/webp"].contains(&ct.as_str()) {
+                content_type = ct;
+            }
+        }
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|err| AppError::BadRequest(format!("invalid file: {err}")))?;
+        if bytes.is_empty() {
+            return Err(AppError::BadRequest("empty file".to_string()));
+        }
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err(AppError::BadRequest("file too large".to_string()));
+        }
+        image_bytes = Some(bytes.to_vec());
     }
-
     let image_bytes = image_bytes.ok_or_else(|| AppError::BadRequest("missing file".to_string()))?;
-    let mid = Uuid::new_v4().to_string();
-    let object_path = format!("moments/{mid}.{ext}");
+    let object_path = format!("moments/{}.{ext}", Uuid::new_v4());
     minio_store::put_object(&state.config, &object_path, image_bytes, &content_type).await?;
+    Ok(Json(serde_json::json!({ "object_path": object_path })))
+}
 
-    // 走已被 Nginx 代理的 /api 路径取图，避免新增 /moments-media 未配置导致 404
-    let image_url = format!("/api/moments/{mid}/image");
-
+pub async fn create(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<crate::models::moment::CreateMomentRequest>,
+) -> Result<Json<MomentItem>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    let content: String = payload.content.trim().chars().take(300).collect();
+    let mut paths: Vec<String> = payload
+        .object_paths
+        .into_iter()
+        .filter(|p| p.starts_with("moments/") && !p.contains("..") && !p.contains('\\'))
+        .take(6)
+        .collect();
+    if paths.is_empty() {
+        return Err(AppError::BadRequest("at least one image required".to_string()));
+    }
+    paths.dedup();
+    let mid = Uuid::new_v4().to_string();
     Ok(Json(
-        moment_store::create_moment(&state.db, &mid, &user.id, &content, &image_url, &object_path)
-            .await?,
+        moment_store::create_moment(&state.db, &mid, &user.id, &content, &paths).await?,
     ))
 }
 
-// 公开取图（img src 无法带鉴权头）
+// 公开取图（img src 无法带鉴权头），支持 /image 和 /image/{idx}
 pub async fn image(
     State(state): State<AppState>,
     Path(moment_id): Path<String>,
 ) -> Result<Response<Body>, AppError> {
-    let object_path = moment_store::get_object_path(&state.db, &moment_id).await?;
+    serve_image(&state, &moment_id, 0).await
+}
+
+pub async fn image_idx(
+    State(state): State<AppState>,
+    Path((moment_id, idx)): Path<(String, usize)>,
+) -> Result<Response<Body>, AppError> {
+    serve_image(&state, &moment_id, idx).await
+}
+
+async fn serve_image(
+    state: &AppState,
+    moment_id: &str,
+    idx: usize,
+) -> Result<Response<Body>, AppError> {
+    let object_path = moment_store::get_image_object_path(&state.db, moment_id, idx).await?;
     let (bytes, content_type) = minio_store::get_object(&state.config, &object_path).await?;
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
