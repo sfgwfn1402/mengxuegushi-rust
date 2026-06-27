@@ -184,7 +184,19 @@ pub async fn delete_moment(
     Path(moment_id): Path<String>,
 ) -> Result<Json<DeleteMomentResponse>, AppError> {
     let user = current_user(&state, &headers).await?;
-    Ok(Json(moment_store::soft_delete(&state.db, &moment_id, &user.id).await?))
+    // 先取出图片对象键，软删后顺带把 MinIO 文件删掉（best-effort，失败不影响删除结果）
+    let paths = moment_store::owned_object_paths(&state.db, &moment_id, &user.id)
+        .await
+        .unwrap_or_default();
+    let resp = moment_store::soft_delete(&state.db, &moment_id, &user.id).await?;
+    if resp.deleted {
+        for p in paths {
+            if let Err(err) = minio_store::delete_object(&state.config, &p).await {
+                tracing::warn!(object = %p, error = %err, "moment minio delete failed");
+            }
+        }
+    }
+    Ok(Json(resp))
 }
 
 pub async fn media(

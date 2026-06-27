@@ -169,6 +169,33 @@ pub async fn get_moment(
 }
 
 
+// 取本人这条动态的所有图片对象键（供删除 MinIO 文件）
+pub async fn owned_object_paths(
+    db: &PgPool,
+    moment_id: &str,
+    user_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let row = sqlx::query("SELECT object_path, object_paths FROM moments WHERE id = $1 AND user_id = $2")
+        .bind(moment_id)
+        .bind(user_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+    let Some(row) = row else { return Ok(vec![]); };
+    let paths: serde_json::Value = row.try_get("object_paths").unwrap_or(serde_json::json!([]));
+    let mut v: Vec<String> = paths
+        .as_array()
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    if v.is_empty() {
+        let single: String = row.get("object_path");
+        if !single.is_empty() {
+            v.push(single);
+        }
+    }
+    Ok(v)
+}
+
 pub async fn soft_delete(
     db: &PgPool,
     moment_id: &str,
