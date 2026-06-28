@@ -69,7 +69,7 @@ pub fn api_routes() -> Router<AppState> {
         )
         .route(
             "/artworks/{artwork_id}",
-            get(artworks::detail).delete(artworks::delete_artwork),
+            get(artworks::detail).put(artworks::edit_artwork).delete(artworks::delete_artwork),
         )
         .route(
             "/artworks/{artwork_id}/submit",

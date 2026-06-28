@@ -254,6 +254,29 @@ pub async fn withdraw_artwork(
     ))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EditArtworkRequest {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+// 编辑诗配画标题/配文，改完重新进入审核
+pub async fn edit_artwork(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(artwork_id): Path<String>,
+    Json(payload): Json<EditArtworkRequest>,
+) -> Result<Json<ArtworkItem>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    let title: String = payload.title.trim().chars().take(40).collect();
+    let description: String = payload.description.trim().chars().take(200).collect();
+    Ok(Json(
+        artwork_store::update_artwork(&state.db, &artwork_id, &user.id, &title, &description).await?,
+    ))
+}
+
 pub async fn delete_artwork(
     State(state): State<AppState>,
     headers: HeaderMap,

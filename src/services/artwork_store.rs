@@ -162,6 +162,32 @@ pub async fn get_object_path(db: &PgPool, artwork_id: &str) -> Result<String, Ap
         .ok_or_else(|| AppError::NotFound(format!("artwork {artwork_id}")))
 }
 
+// 编辑诗配画的标题/配文；改完重新进入审核(submitted)
+pub async fn update_artwork(
+    db: &PgPool,
+    artwork_id: &str,
+    user_id: &str,
+    title: &str,
+    description: &str,
+) -> Result<ArtworkItem, AppError> {
+    let affected = sqlx::query(
+        "UPDATE poem_artworks SET title = $3, description = $4, status = 'submitted', updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND user_id = $2 AND status IN ('active','submitted','public','rejected')",
+    )
+    .bind(artwork_id)
+    .bind(user_id)
+    .bind(title)
+    .bind(description)
+    .execute(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?
+    .rows_affected();
+    if affected == 0 {
+        return Err(AppError::BadRequest("不可编辑（非本人或状态不允许）".to_string()));
+    }
+    get_artwork(db, artwork_id, Some(user_id)).await
+}
+
 pub async fn soft_delete(
     db: &PgPool,
     artwork_id: &str,
