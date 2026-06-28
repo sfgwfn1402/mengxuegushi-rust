@@ -173,6 +173,56 @@ pub async fn list_active_by_user(
     Ok(items)
 }
 
+// 某用户的公开朗诵（带诗名，供作者主页用）
+pub async fn list_public_by_user(
+    db: &PgPool,
+    target_user_id: &str,
+    current_user_id: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        r#"
+        SELECT r.id, r.poem_id, p.title AS poem_title, r.duration_seconds,
+               u.nickname, u.avatar_url, r.like_count, r.created_at,
+               EXISTS(SELECT 1 FROM user_recitation_likes l WHERE l.recitation_id = r.id AND l.user_id = $1) AS liked_by_me
+        FROM user_recitations r
+        JOIN users u ON u.id = r.user_id
+        JOIN poems p ON p.id = r.poem_id
+        WHERE r.user_id = $4 AND r.status = 'public'
+        ORDER BY r.created_at DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(current_user_id.unwrap_or(""))
+    .bind(limit)
+    .bind(offset)
+    .bind(target_user_id)
+    .fetch_all(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
+            serde_json::json!({
+                "id": row.get::<String, _>("id"),
+                "poem_id": row.get::<i32, _>("poem_id"),
+                "poem_title": row.get::<String, _>("poem_title"),
+                "duration_seconds": row.get::<Option<i32>, _>("duration_seconds"),
+                "nickname": row.get::<Option<String>, _>("nickname"),
+                "avatar_url": row.get::<Option<String>, _>("avatar_url"),
+                "like_count": row.get::<i32, _>("like_count"),
+                "liked_by_me": row.get::<bool, _>("liked_by_me"),
+                "created_at": created_at.to_rfc3339(),
+            })
+        })
+        .collect();
+    Ok(items)
+}
+
 pub async fn get_featured_by_poem(
     db: &PgPool,
     poem_id: i32,

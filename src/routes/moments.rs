@@ -318,6 +318,48 @@ pub async fn user_moments(
     Ok(Json(MomentListResponse { items }))
 }
 
+// 某用户的公开诗配画
+pub async fn user_artworks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+    Query(q): Query<ListQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let uid = current_user(&state, &headers).await.ok().map(|u| u.id);
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(20).clamp(1, 50);
+    let items = crate::services::artwork_store::list_public_by_user(
+        &state.db,
+        &user_id,
+        uid.as_deref(),
+        page_size,
+        (page - 1) * page_size,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+// 某用户的公开朗诵
+pub async fn user_recitations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+    Query(q): Query<ListQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let uid = current_user(&state, &headers).await.ok().map(|u| u.id);
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(20).clamp(1, 50);
+    let items = crate::services::recitation_store::list_public_by_user(
+        &state.db,
+        &user_id,
+        uid.as_deref(),
+        page_size,
+        (page - 1) * page_size,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
 // 关注作者
 pub async fn follow_user(
     State(state): State<AppState>,

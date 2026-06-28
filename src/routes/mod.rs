@@ -124,6 +124,8 @@ pub fn api_routes() -> Router<AppState> {
         )
         .route("/users/{user_id}/profile", get(moments::user_profile))
         .route("/users/{user_id}/moments", get(moments::user_moments))
+        .route("/users/{user_id}/artworks", get(moments::user_artworks))
+        .route("/users/{user_id}/recitations", get(moments::user_recitations))
         .route(
             "/users/{user_id}/follow",
             post(moments::follow_user).delete(moments::unfollow_user),

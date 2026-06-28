@@ -68,6 +68,38 @@ pub async fn list_recent(
     rows.into_iter().map(row_to_artwork).collect()
 }
 
+// 某用户的公开诗配画
+pub async fn list_public_by_user(
+    db: &PgPool,
+    target_user_id: &str,
+    current_user_id: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ArtworkItem>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT a.id, a.poem_id, a.user_id, u.nickname, u.avatar_url, p.title AS poem_title,
+               a.title, a.description, a.image_url, a.like_count, a.status, a.created_at,
+               EXISTS(SELECT 1 FROM poem_artwork_likes l WHERE l.artwork_id = a.id AND l.user_id = $1) AS liked_by_me
+        FROM poem_artworks a
+        JOIN users u ON u.id = a.user_id
+        JOIN poems p ON p.id = a.poem_id
+        WHERE a.status = 'public' AND a.user_id = $4
+        ORDER BY a.created_at DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(current_user_id.unwrap_or(""))
+    .bind(limit)
+    .bind(offset)
+    .bind(target_user_id)
+    .fetch_all(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    rows.into_iter().map(row_to_artwork).collect()
+}
+
 pub async fn list_mine(
     db: &PgPool,
     user_id: &str,
