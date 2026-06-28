@@ -3,7 +3,7 @@ use sqlx::{PgPool, Row};
 use crate::{
     error::AppError,
     models::{
-        moment::{DeleteMomentResponse, MomentItem},
+        moment::{DeleteMomentResponse, MomentComment, MomentItem},
         recitation::LikeResponse,
     },
 };
@@ -34,6 +34,7 @@ fn row_to_moment(row: sqlx::postgres::PgRow) -> Result<MomentItem, AppError> {
         object_paths,
         like_count: row.get("like_count"),
         liked_by_me: row.get("liked_by_me"),
+        comment_count: row.try_get("comment_count").unwrap_or(0),
         status: row.get("status"),
         created_at: row.get("created_at"),
     })
@@ -106,7 +107,7 @@ pub async fn list_public(
     let rows = sqlx::query(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-               m.like_count, m.status, m.created_at,
+               m.like_count, m.comment_count, m.status, m.created_at,
                EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $1) AS liked_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
@@ -133,7 +134,7 @@ pub async fn list_mine(
     let rows = sqlx::query(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-               m.like_count, m.status, m.created_at, FALSE AS liked_by_me
+               m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
         WHERE m.user_id = $1 AND m.status IN ('submitted','public','rejected')
@@ -157,7 +158,7 @@ pub async fn get_moment(
     let row = sqlx::query(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-               m.like_count, m.status, m.created_at,
+               m.like_count, m.comment_count, m.status, m.created_at,
                EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $2) AS liked_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
@@ -302,7 +303,7 @@ pub async fn list_admin(
             let rows = sqlx::query(
                 r#"
                 SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-                       m.like_count, m.status, m.created_at, FALSE AS liked_by_me
+                       m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me
                 FROM moments m JOIN users u ON u.id = m.user_id
                 WHERE m.status = $1
                 ORDER BY CASE m.status WHEN 'submitted' THEN 0 ELSE 1 END, m.created_at DESC
@@ -327,7 +328,7 @@ pub async fn list_admin(
             let rows = sqlx::query(
                 r#"
                 SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-                       m.like_count, m.status, m.created_at, FALSE AS liked_by_me
+                       m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me
                 FROM moments m JOIN users u ON u.id = m.user_id
                 WHERE m.status IN ('submitted','public','rejected')
                 ORDER BY CASE m.status WHEN 'submitted' THEN 0 ELSE 1 END, m.created_at DESC
@@ -407,4 +408,147 @@ async fn current_like_count(db: &PgPool, moment_id: &str) -> Result<i32, AppErro
         .await
         .map_err(|err| AppError::Internal(err.to_string()))?;
     Ok(count.unwrap_or(0))
+}
+
+fn row_to_comment(row: sqlx::postgres::PgRow) -> Result<MomentComment, AppError> {
+    Ok(MomentComment {
+        id: row.get("id"),
+        moment_id: row.get("moment_id"),
+        user_id: row.get("user_id"),
+        nickname: row.get("nickname"),
+        avatar_url: row.get("avatar_url"),
+        parent_id: row.get("parent_id"),
+        reply_to_nickname: row.get("reply_to_nickname"),
+        content: row.get("content"),
+        created_at: row.get("created_at"),
+    })
+}
+
+// 该动态是否可评论（公开，或本人审核中的）
+async fn moment_commentable(db: &PgPool, moment_id: &str) -> Result<bool, AppError> {
+    let exists: Option<String> =
+        sqlx::query_scalar("SELECT status FROM moments WHERE id = $1 AND status IN ('public','submitted')")
+            .bind(moment_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?;
+    Ok(exists.is_some())
+}
+
+pub async fn list_comments(
+    db: &PgPool,
+    moment_id: &str,
+) -> Result<Vec<MomentComment>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT c.id, c.moment_id, c.user_id, u.nickname, u.avatar_url,
+               c.parent_id, c.reply_to_nickname, c.content, c.created_at
+        FROM moment_comments c
+        JOIN users u ON u.id = c.user_id
+        WHERE c.moment_id = $1 AND c.status = 'public'
+        ORDER BY c.created_at ASC
+        "#,
+    )
+    .bind(moment_id)
+    .fetch_all(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    rows.into_iter().map(row_to_comment).collect()
+}
+
+pub async fn create_comment(
+    db: &PgPool,
+    id: &str,
+    moment_id: &str,
+    user_id: &str,
+    parent_id: Option<&str>,
+    reply_to_nickname: Option<&str>,
+    content: &str,
+) -> Result<MomentComment, AppError> {
+    if !moment_commentable(db, moment_id).await? {
+        return Err(AppError::NotFound(format!("moment {moment_id}")));
+    }
+    // 回复必须挂在本动态已存在的顶层评论下，否则视为顶层评论
+    let parent: Option<String> = match parent_id {
+        Some(pid) if !pid.is_empty() => {
+            sqlx::query_scalar(
+                "SELECT id FROM moment_comments WHERE id = $1 AND moment_id = $2 AND parent_id IS NULL AND status = 'public'",
+            )
+            .bind(pid)
+            .bind(moment_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?
+        }
+        _ => None,
+    };
+
+    sqlx::query(
+        r#"
+        INSERT INTO moment_comments (id, moment_id, user_id, parent_id, reply_to_nickname, content, status)
+        VALUES ($1, $2, $3, $4, $5, $6, 'public')
+        "#,
+    )
+    .bind(id)
+    .bind(moment_id)
+    .bind(user_id)
+    .bind(&parent)
+    .bind(reply_to_nickname.filter(|s| !s.is_empty()))
+    .bind(content)
+    .execute(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    sqlx::query("UPDATE moments SET comment_count = comment_count + 1 WHERE id = $1")
+        .bind(moment_id)
+        .execute(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    let row = sqlx::query(
+        r#"
+        SELECT c.id, c.moment_id, c.user_id, u.nickname, u.avatar_url,
+               c.parent_id, c.reply_to_nickname, c.content, c.created_at
+        FROM moment_comments c JOIN users u ON u.id = c.user_id
+        WHERE c.id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_one(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    row_to_comment(row)
+}
+
+// 删除自己的评论：顶层评论连同其楼中楼一并删除
+pub async fn delete_comment(
+    db: &PgPool,
+    moment_id: &str,
+    comment_id: &str,
+    user_id: &str,
+) -> Result<DeleteMomentResponse, AppError> {
+    let affected = sqlx::query(
+        r#"
+        UPDATE moment_comments SET status = 'deleted'
+        WHERE moment_id = $2 AND user_id = $3 AND status = 'public'
+          AND (id = $1 OR parent_id = $1)
+        "#,
+    )
+    .bind(comment_id)
+    .bind(moment_id)
+    .bind(user_id)
+    .execute(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?
+    .rows_affected();
+
+    if affected > 0 {
+        sqlx::query("UPDATE moments SET comment_count = GREATEST(comment_count - $2, 0) WHERE id = $1")
+            .bind(moment_id)
+            .bind(affected as i32)
+            .execute(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?;
+    }
+    Ok(DeleteMomentResponse { deleted: affected > 0 })
 }

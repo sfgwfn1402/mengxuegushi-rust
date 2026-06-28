@@ -10,7 +10,10 @@ use uuid::Uuid;
 use crate::{
     error::AppError,
     models::{
-        moment::{DeleteMomentResponse, MomentItem, MomentListResponse},
+        moment::{
+            CommentListResponse, CreateCommentRequest, DeleteMomentResponse, MomentComment,
+            MomentItem, MomentListResponse,
+        },
         recitation::LikeResponse,
     },
     routes::me::current_user,
@@ -227,6 +230,59 @@ pub async fn delete_moment(
         }
     }
     Ok(Json(resp))
+}
+
+// 列出某条动态的所有评论（含楼中楼），公开可读
+pub async fn list_comments(
+    State(state): State<AppState>,
+    Path(moment_id): Path<String>,
+) -> Result<Json<CommentListResponse>, AppError> {
+    let items = moment_store::list_comments(&state.db, &moment_id).await?;
+    let comment_count = items.len() as i32;
+    Ok(Json(CommentListResponse { items, comment_count }))
+}
+
+// 发表评论 / 回复（parent_id 为顶层评论 id 时是楼中楼）
+pub async fn create_comment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(moment_id): Path<String>,
+    Json(payload): Json<CreateCommentRequest>,
+) -> Result<Json<MomentComment>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    let content: String = payload.content.trim().chars().take(300).collect();
+    if content.is_empty() {
+        return Err(AppError::BadRequest("评论内容不能为空".to_string()));
+    }
+    let reply_to: Option<String> = payload
+        .reply_to_nickname
+        .map(|s| s.trim().chars().take(40).collect::<String>())
+        .filter(|s| !s.is_empty());
+    let id = Uuid::new_v4().to_string();
+    Ok(Json(
+        moment_store::create_comment(
+            &state.db,
+            &id,
+            &moment_id,
+            &user.id,
+            payload.parent_id.as_deref(),
+            reply_to.as_deref(),
+            &content,
+        )
+        .await?,
+    ))
+}
+
+// 删除自己的评论（顶层评论连同回复一起删）
+pub async fn delete_comment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((moment_id, comment_id)): Path<(String, String)>,
+) -> Result<Json<DeleteMomentResponse>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    Ok(Json(
+        moment_store::delete_comment(&state.db, &moment_id, &comment_id, &user.id).await?,
+    ))
 }
 
 pub async fn media(
