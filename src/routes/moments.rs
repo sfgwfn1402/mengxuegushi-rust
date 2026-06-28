@@ -12,7 +12,7 @@ use crate::{
     models::{
         moment::{
             CommentListResponse, CreateCommentRequest, DeleteMomentResponse, MomentComment,
-            MomentItem, MomentListResponse,
+            MomentItem, MomentListResponse, UserProfile,
         },
         recitation::LikeResponse,
     },
@@ -283,6 +283,39 @@ pub async fn delete_comment(
     Ok(Json(
         moment_store::delete_comment(&state.db, &moment_id, &comment_id, &user.id).await?,
     ))
+}
+
+// 用户公开主页资料
+pub async fn user_profile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> Result<Json<UserProfile>, AppError> {
+    let uid = current_user(&state, &headers).await.ok().map(|u| u.id);
+    Ok(Json(
+        moment_store::get_user_profile(&state.db, &user_id, uid.as_deref()).await?,
+    ))
+}
+
+// 某用户的公开动态
+pub async fn user_moments(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+    Query(q): Query<ListQuery>,
+) -> Result<Json<MomentListResponse>, AppError> {
+    let uid = current_user(&state, &headers).await.ok().map(|u| u.id);
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(20).clamp(1, 50);
+    let items = moment_store::list_user_moments(
+        &state.db,
+        &user_id,
+        uid.as_deref(),
+        page_size,
+        (page - 1) * page_size,
+    )
+    .await?;
+    Ok(Json(MomentListResponse { items }))
 }
 
 // 关注作者

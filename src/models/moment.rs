@@ -57,6 +57,17 @@ pub struct CommentListResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct UserProfile {
+    pub user_id: String,
+    pub nickname: Option<String>,
+    pub avatar_url: Option<String>,
+    pub following_count: i64,
+    pub follower_count: i64,
+    pub moment_count: i64,
+    pub followed_by_me: bool,
+}
+
+#[derive(Debug, Serialize)]
 pub struct MomentListResponse {
     pub items: Vec<MomentItem>,
 }

@@ -122,6 +122,8 @@ pub fn api_routes() -> Router<AppState> {
             "/moments/{moment_id}/comments/{comment_id}",
             axum::routing::delete(moments::delete_comment),
         )
+        .route("/users/{user_id}/profile", get(moments::user_profile))
+        .route("/users/{user_id}/moments", get(moments::user_moments))
         .route(
             "/users/{user_id}/follow",
             post(moments::follow_user).delete(moments::unfollow_user),

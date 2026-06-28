@@ -3,7 +3,7 @@ use sqlx::{PgPool, Row};
 use crate::{
     error::AppError,
     models::{
-        moment::{DeleteMomentResponse, MomentComment, MomentItem},
+        moment::{DeleteMomentResponse, MomentComment, MomentItem, UserProfile},
         recitation::LikeResponse,
     },
 };
@@ -521,6 +521,71 @@ pub async fn create_comment(
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
     row_to_comment(row)
+}
+
+// 用户公开主页资料（昵称/头像 + 关注·粉丝·作品数 + 我是否已关注）
+pub async fn get_user_profile(
+    db: &PgPool,
+    user_id: &str,
+    current_user_id: Option<&str>,
+) -> Result<UserProfile, AppError> {
+    let row = sqlx::query(
+        r#"
+        SELECT u.nickname, u.avatar_url,
+               (SELECT COUNT(*) FROM user_follows WHERE follower_id = $1) AS following_count,
+               (SELECT COUNT(*) FROM user_follows WHERE followee_id = $1) AS follower_count,
+               (SELECT COUNT(*) FROM moments WHERE user_id = $1 AND status = 'public') AS moment_count,
+               EXISTS(SELECT 1 FROM user_follows WHERE follower_id = $2 AND followee_id = $1) AS followed_by_me
+        FROM users u WHERE u.id = $1
+        "#,
+    )
+    .bind(user_id)
+    .bind(current_user_id.unwrap_or(""))
+    .fetch_optional(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?
+    .ok_or_else(|| AppError::NotFound(format!("user {user_id}")))?;
+
+    Ok(UserProfile {
+        user_id: user_id.to_string(),
+        nickname: row.get("nickname"),
+        avatar_url: row.get("avatar_url"),
+        following_count: row.get("following_count"),
+        follower_count: row.get("follower_count"),
+        moment_count: row.get("moment_count"),
+        followed_by_me: row.get("followed_by_me"),
+    })
+}
+
+// 某用户的公开动态
+pub async fn list_user_moments(
+    db: &PgPool,
+    target_user_id: &str,
+    current_user_id: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<MomentItem>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
+               m.like_count, m.comment_count, m.status, m.created_at,
+               EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $2) AS liked_by_me,
+               EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $2 AND f.followee_id = m.user_id) AS followed_by_me
+        FROM moments m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.user_id = $1 AND m.status = 'public'
+        ORDER BY m.created_at DESC
+        LIMIT $3 OFFSET $4
+        "#,
+    )
+    .bind(target_user_id)
+    .bind(current_user_id.unwrap_or(""))
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    rows.into_iter().map(row_to_moment).collect()
 }
 
 // 关注 / 取关，返回最新关注状态
