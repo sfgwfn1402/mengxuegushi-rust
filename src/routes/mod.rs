@@ -136,6 +136,8 @@ pub fn api_routes() -> Router<AppState> {
         .route("/admin/send-reminders", post(admin::send_reminders))
         .route("/me/messages/summary", get(messages::summary))
         .route("/me/messages/list", get(messages::list))
+        .route("/me/likes", get(messages::my_likes))
+        .route("/me/comments", get(messages::my_comments))
         .route("/me/tasks", post(me::complete_task))
         .route("/me/clear-data", post(me::clear_data))
         .route("/me/progress", get(me::list_progress))
