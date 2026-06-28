@@ -66,6 +66,7 @@ pub struct UserProfile {
     pub follower_count: i64,
     pub moment_count: i64,
     pub followed_by_me: bool,
+    pub location: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

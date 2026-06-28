@@ -538,6 +538,7 @@ pub async fn get_user_profile(
                (SELECT COUNT(*) FROM user_follows WHERE follower_id = $1) AS following_count,
                (SELECT COUNT(*) FROM user_follows WHERE followee_id = $1) AS follower_count,
                (SELECT COUNT(*) FROM moments WHERE user_id = $1 AND status = 'public') AS moment_count,
+               (SELECT location FROM moments WHERE user_id = $1 AND location IS NOT NULL ORDER BY created_at DESC LIMIT 1) AS location,
                EXISTS(SELECT 1 FROM user_follows WHERE follower_id = $2 AND followee_id = $1) AS followed_by_me
         FROM users u WHERE u.id = $1
         "#,
@@ -557,6 +558,7 @@ pub async fn get_user_profile(
         follower_count: row.get("follower_count"),
         moment_count: row.get("moment_count"),
         followed_by_me: row.get("followed_by_me"),
+        location: row.try_get("location").unwrap_or(None),
     })
 }
 
