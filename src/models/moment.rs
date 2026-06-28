@@ -15,6 +15,7 @@ pub struct MomentItem {
     pub liked_by_me: bool,
     pub comment_count: i32,
     pub followed_by_me: bool,
+    pub location: Option<String>,
     pub status: String,
     pub created_at: DateTime<Utc>,
 }

@@ -970,6 +970,7 @@ dependencies = [
  "base64",
  "chrono",
  "dotenvy",
+ "encoding_rs",
  "hex",
  "hmac",
  "reqwest",

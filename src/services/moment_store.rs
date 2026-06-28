@@ -36,6 +36,7 @@ fn row_to_moment(row: sqlx::postgres::PgRow) -> Result<MomentItem, AppError> {
         liked_by_me: row.get("liked_by_me"),
         comment_count: row.try_get("comment_count").unwrap_or(0),
         followed_by_me: row.try_get("followed_by_me").unwrap_or(false),
+        location: row.try_get("location").unwrap_or(None),
         status: row.get("status"),
         created_at: row.get("created_at"),
     })
@@ -47,13 +48,14 @@ pub async fn create_moment(
     user_id: &str,
     content: &str,
     object_paths: &[String],
+    location: Option<&str>,
 ) -> Result<MomentItem, AppError> {
     let first = object_paths.first().cloned().unwrap_or_default();
     let paths_json = serde_json::json!(object_paths);
     sqlx::query(
         r#"
-        INSERT INTO moments (id, user_id, content, image_url, object_path, object_paths, status)
-        VALUES ($1, $2, $3, $4, $5, $6, 'submitted')
+        INSERT INTO moments (id, user_id, content, image_url, object_path, object_paths, location, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'submitted')
         "#,
     )
     .bind(id)
@@ -62,6 +64,7 @@ pub async fn create_moment(
     .bind(format!("/api/moments/{id}/image/0"))
     .bind(&first)
     .bind(&paths_json)
+    .bind(location)
     .execute(db)
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
@@ -108,7 +111,7 @@ pub async fn list_public(
     let rows = sqlx::query(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-               m.like_count, m.comment_count, m.status, m.created_at,
+               m.like_count, m.comment_count, m.location, m.status, m.created_at,
                EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $1) AS liked_by_me,
                EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $1 AND f.followee_id = m.user_id) AS followed_by_me
         FROM moments m
@@ -136,7 +139,7 @@ pub async fn list_mine(
     let rows = sqlx::query(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-               m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me, FALSE AS followed_by_me
+               m.like_count, m.comment_count, m.location, m.status, m.created_at, FALSE AS liked_by_me, FALSE AS followed_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
         WHERE m.user_id = $1 AND m.status IN ('submitted','public','rejected')
@@ -160,7 +163,7 @@ pub async fn get_moment(
     let row = sqlx::query(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-               m.like_count, m.comment_count, m.status, m.created_at,
+               m.like_count, m.comment_count, m.location, m.status, m.created_at,
                EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $2) AS liked_by_me,
                EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $2 AND f.followee_id = m.user_id) AS followed_by_me
         FROM moments m
@@ -306,7 +309,7 @@ pub async fn list_admin(
             let rows = sqlx::query(
                 r#"
                 SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-                       m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me, FALSE AS followed_by_me
+                       m.like_count, m.comment_count, m.location, m.status, m.created_at, FALSE AS liked_by_me, FALSE AS followed_by_me
                 FROM moments m JOIN users u ON u.id = m.user_id
                 WHERE m.status = $1
                 ORDER BY CASE m.status WHEN 'submitted' THEN 0 ELSE 1 END, m.created_at DESC
@@ -331,7 +334,7 @@ pub async fn list_admin(
             let rows = sqlx::query(
                 r#"
                 SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-                       m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me, FALSE AS followed_by_me
+                       m.like_count, m.comment_count, m.location, m.status, m.created_at, FALSE AS liked_by_me, FALSE AS followed_by_me
                 FROM moments m JOIN users u ON u.id = m.user_id
                 WHERE m.status IN ('submitted','public','rejected')
                 ORDER BY CASE m.status WHEN 'submitted' THEN 0 ELSE 1 END, m.created_at DESC
@@ -568,7 +571,7 @@ pub async fn list_user_moments(
     let rows = sqlx::query(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-               m.like_count, m.comment_count, m.status, m.created_at,
+               m.like_count, m.comment_count, m.location, m.status, m.created_at,
                EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $2) AS liked_by_me,
                EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $2 AND f.followee_id = m.user_id) AS followed_by_me
         FROM moments m

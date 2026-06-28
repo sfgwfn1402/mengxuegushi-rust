@@ -123,9 +123,14 @@ pub async fn create(
         return Err(AppError::BadRequest("at least one image required".to_string()));
     }
     paths.dedup();
+    // 发布时解析 IP 属地（best-effort，失败不影响发布）
+    let location = match crate::services::geoip::client_ip(&headers) {
+        Some(ip) => crate::services::geoip::resolve_location(&ip).await,
+        None => None,
+    };
     let mid = Uuid::new_v4().to_string();
     Ok(Json(
-        moment_store::create_moment(&state.db, &mid, &user.id, &content, &paths).await?,
+        moment_store::create_moment(&state.db, &mid, &user.id, &content, &paths, location.as_deref()).await?,
     ))
 }
 
