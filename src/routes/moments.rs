@@ -134,6 +134,18 @@ pub async fn create(
     ))
 }
 
+// 按 id 取单条动态（供详情页直接打开，无需 eventChannel 传参）
+pub async fn get_one(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(moment_id): Path<String>,
+) -> Result<Json<MomentItem>, AppError> {
+    let uid = current_user(&state, &headers).await.ok().map(|u| u.id);
+    Ok(Json(
+        moment_store::get_moment(&state.db, &moment_id, uid.as_deref()).await?,
+    ))
+}
+
 // 公开取图（img src 无法带鉴权头），支持 /image 和 /image/{idx}
 pub async fn image(
     State(state): State<AppState>,
