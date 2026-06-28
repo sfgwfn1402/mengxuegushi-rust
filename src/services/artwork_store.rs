@@ -84,7 +84,8 @@ pub async fn list_public_by_user(
         FROM poem_artworks a
         JOIN users u ON u.id = a.user_id
         JOIN poems p ON p.id = a.poem_id
-        WHERE a.status = 'public' AND a.user_id = $4
+        WHERE a.user_id = $4
+          AND (a.status = 'public' OR ($1 = $4 AND a.status IN ('active','submitted','rejected')))
         ORDER BY a.created_at DESC
         LIMIT $2 OFFSET $3
         "#,
