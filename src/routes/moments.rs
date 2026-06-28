@@ -285,6 +285,28 @@ pub async fn delete_comment(
     ))
 }
 
+// 关注作者
+pub async fn follow_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let me = current_user(&state, &headers).await?;
+    let following = moment_store::follow_user(&state.db, &me.id, &user_id).await?;
+    Ok(Json(serde_json::json!({ "following": following })))
+}
+
+// 取关
+pub async fn unfollow_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let me = current_user(&state, &headers).await?;
+    let following = moment_store::unfollow_user(&state.db, &me.id, &user_id).await?;
+    Ok(Json(serde_json::json!({ "following": following })))
+}
+
 pub async fn media(
     State(state): State<AppState>,
     Path(path): Path<String>,

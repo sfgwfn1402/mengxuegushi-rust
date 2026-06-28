@@ -35,6 +35,7 @@ fn row_to_moment(row: sqlx::postgres::PgRow) -> Result<MomentItem, AppError> {
         like_count: row.get("like_count"),
         liked_by_me: row.get("liked_by_me"),
         comment_count: row.try_get("comment_count").unwrap_or(0),
+        followed_by_me: row.try_get("followed_by_me").unwrap_or(false),
         status: row.get("status"),
         created_at: row.get("created_at"),
     })
@@ -108,7 +109,8 @@ pub async fn list_public(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
                m.like_count, m.comment_count, m.status, m.created_at,
-               EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $1) AS liked_by_me
+               EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $1) AS liked_by_me,
+               EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $1 AND f.followee_id = m.user_id) AS followed_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
         WHERE m.status = 'public' OR (m.user_id = $1 AND m.status = 'submitted')
@@ -134,7 +136,7 @@ pub async fn list_mine(
     let rows = sqlx::query(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-               m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me
+               m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me, FALSE AS followed_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
         WHERE m.user_id = $1 AND m.status IN ('submitted','public','rejected')
@@ -159,7 +161,8 @@ pub async fn get_moment(
         r#"
         SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
                m.like_count, m.comment_count, m.status, m.created_at,
-               EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $2) AS liked_by_me
+               EXISTS(SELECT 1 FROM moment_likes l WHERE l.moment_id = m.id AND l.user_id = $2) AS liked_by_me,
+               EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $2 AND f.followee_id = m.user_id) AS followed_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
         WHERE m.id = $1 AND m.status IN ('submitted','public')
@@ -303,7 +306,7 @@ pub async fn list_admin(
             let rows = sqlx::query(
                 r#"
                 SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-                       m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me
+                       m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me, FALSE AS followed_by_me
                 FROM moments m JOIN users u ON u.id = m.user_id
                 WHERE m.status = $1
                 ORDER BY CASE m.status WHEN 'submitted' THEN 0 ELSE 1 END, m.created_at DESC
@@ -328,7 +331,7 @@ pub async fn list_admin(
             let rows = sqlx::query(
                 r#"
                 SELECT m.id, m.user_id, u.nickname, u.avatar_url, m.content, m.image_url, m.object_paths,
-                       m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me
+                       m.like_count, m.comment_count, m.status, m.created_at, FALSE AS liked_by_me, FALSE AS followed_by_me
                 FROM moments m JOIN users u ON u.id = m.user_id
                 WHERE m.status IN ('submitted','public','rejected')
                 ORDER BY CASE m.status WHEN 'submitted' THEN 0 ELSE 1 END, m.created_at DESC
@@ -518,6 +521,40 @@ pub async fn create_comment(
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
     row_to_comment(row)
+}
+
+// 关注 / 取关，返回最新关注状态
+pub async fn follow_user(
+    db: &PgPool,
+    follower_id: &str,
+    followee_id: &str,
+) -> Result<bool, AppError> {
+    if follower_id == followee_id {
+        return Err(AppError::BadRequest("不能关注自己".to_string()));
+    }
+    sqlx::query(
+        "INSERT INTO user_follows (follower_id, followee_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(follower_id)
+    .bind(followee_id)
+    .execute(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    Ok(true)
+}
+
+pub async fn unfollow_user(
+    db: &PgPool,
+    follower_id: &str,
+    followee_id: &str,
+) -> Result<bool, AppError> {
+    sqlx::query("DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2")
+        .bind(follower_id)
+        .bind(followee_id)
+        .execute(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+    Ok(false)
 }
 
 // 删除自己的评论：顶层评论连同其楼中楼一并删除
