@@ -93,6 +93,8 @@ pub fn api_routes() -> Router<AppState> {
         )
         .route("/auth/wechat-login", post(auth::wechat_login))
         .route("/auth/dev-login", post(auth::dev_login))
+        .route("/auth/register", post(auth::account_register))
+        .route("/auth/login", post(auth::account_login))
         .route("/me", get(me::me).post(me::update_profile))
         .route("/me/avatar", post(me::upload_avatar))
         .route("/me/stats", get(me::stats))

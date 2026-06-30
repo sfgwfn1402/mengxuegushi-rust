@@ -273,6 +273,79 @@ pub async fn list_favorite_poem_ids(db: &PgPool, user_id: &str) -> Result<Vec<u3
         .collect())
 }
 
+/// Create a phone/email + password user. `openid` is synthesised as
+/// "acct:<kind>:<account>" so the existing NOT NULL UNIQUE constraint and the
+/// dev-token-{id} auth path keep working unchanged.
+pub async fn create_account_user(
+    db: &PgPool,
+    kind: &str,
+    account: &str,
+    password_hash: &str,
+    nickname: Option<&str>,
+) -> Result<User, AppError> {
+    let id = Uuid::new_v4().to_string();
+    let openid = format!("acct:{kind}:{account}");
+    let (phone, email): (Option<&str>, Option<&str>) = match kind {
+        "email" => (None, Some(account)),
+        _ => (Some(account), None),
+    };
+
+    sqlx::query(
+        r#"
+        INSERT INTO users (id, openid, phone, email, password_hash, nickname)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(&id)
+    .bind(&openid)
+    .bind(phone)
+    .bind(email)
+    .bind(password_hash)
+    .bind(nickname)
+    .execute(db)
+    .await
+    .map_err(|err| {
+        if err
+            .as_database_error()
+            .map(|e| e.is_unique_violation())
+            .unwrap_or(false)
+        {
+            AppError::BadRequest("这个账号已经注册过了，直接登录就好。".to_string())
+        } else {
+            AppError::Internal(err.to_string())
+        }
+    })?;
+
+    find_user_by_id(db, &id)
+        .await?
+        .ok_or_else(|| AppError::Internal("failed to load created user".to_string()))
+}
+
+/// Look up an account user (phone/email) together with its stored password hash.
+/// Returns None if the account does not exist or has no password set.
+pub async fn find_account_user(
+    db: &PgPool,
+    kind: &str,
+    account: &str,
+) -> Result<Option<(User, String)>, AppError> {
+    let column = if kind == "email" { "email" } else { "phone" };
+    let sql = format!(
+        "SELECT id, openid, unionid, nickname, avatar_url, COALESCE(role, 'user') AS role, password_hash \
+         FROM users WHERE {column} = $1"
+    );
+
+    let row = sqlx::query(&sql)
+        .bind(account)
+        .fetch_optional(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    Ok(row.and_then(|r| {
+        let hash: Option<String> = r.get("password_hash");
+        hash.map(|h| (row_to_user(r), h))
+    }))
+}
+
 fn row_to_user(row: sqlx::postgres::PgRow) -> User {
     User {
         id: row.get("id"),
