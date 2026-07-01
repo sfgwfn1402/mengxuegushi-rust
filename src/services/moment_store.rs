@@ -537,7 +537,8 @@ pub async fn get_user_profile(
         SELECT u.nickname, u.avatar_url,
                (SELECT COUNT(*) FROM user_follows WHERE follower_id = $1) AS following_count,
                (SELECT COUNT(*) FROM user_follows WHERE followee_id = $1) AS follower_count,
-               (SELECT COUNT(*) FROM moments WHERE user_id = $1 AND status = 'public') AS moment_count,
+               (SELECT COUNT(*) FROM moments WHERE user_id = $1
+                    AND (status = 'public' OR ($1 = $2 AND status = 'submitted'))) AS moment_count,
                (SELECT location FROM moments WHERE user_id = $1 AND location IS NOT NULL ORDER BY created_at DESC LIMIT 1) AS location,
                EXISTS(SELECT 1 FROM user_follows WHERE follower_id = $2 AND followee_id = $1) AS followed_by_me
         FROM users u WHERE u.id = $1
@@ -578,7 +579,7 @@ pub async fn list_user_moments(
                EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $2 AND f.followee_id = m.user_id) AS followed_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
-        WHERE m.user_id = $1 AND m.status = 'public'
+        WHERE m.user_id = $1 AND (m.status = 'public' OR ($1 = $2 AND m.status = 'submitted'))
         ORDER BY m.created_at DESC
         LIMIT $3 OFFSET $4
         "#,
