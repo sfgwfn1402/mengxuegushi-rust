@@ -52,16 +52,19 @@ pub async fn resolve_location(ip: &str) -> Option<String> {
     if ip.is_empty() || ip.starts_with("127.") || ip.starts_with("10.") || ip.starts_with("192.168.") {
         return None;
     }
-    let url = format!("https://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true");
+    // ip-api.com：免费、UTF-8 JSON、lang=zh-CN 直接返回中文省份（regionName）。
+    // 免费版为 HTTP、限速 45 次/分，对社区发帖量足够；高并发可换离线 ip2region。
+    let url = format!("http://ip-api.com/json/{ip}?lang=zh-CN&fields=status,regionName");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
         .ok()?;
-    let bytes = client.get(&url).send().await.ok()?.bytes().await.ok()?;
-    // pconline 返回 GBK 编码
-    let (text, _, _) = encoding_rs::GBK.decode(&bytes);
+    let text = client.get(&url).send().await.ok()?.text().await.ok()?;
     let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let pro = json.get("pro").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if json.get("status").and_then(|v| v.as_str()) != Some("success") {
+        return None;
+    }
+    let pro = json.get("regionName").and_then(|v| v.as_str()).unwrap_or("").trim();
     if pro.is_empty() {
         return None;
     }
