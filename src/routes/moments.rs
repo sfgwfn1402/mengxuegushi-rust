@@ -399,6 +399,71 @@ pub async fn unfollow_user(
     Ok(Json(serde_json::json!({ "following": following })))
 }
 
+#[derive(Deserialize)]
+pub struct ReportRequest {
+    pub target_kind: String,   // moment | comment | artwork | recitation | user
+    pub target_id: String,
+    pub reason: Option<String>,
+}
+
+// 举报内容/用户。任何登录用户可举报，进入待审核队列。
+pub async fn report_content(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ReportRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let me = current_user(&state, &headers).await?;
+    sqlx::query(
+        "INSERT INTO content_reports (id, reporter_id, target_kind, target_id, reason) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&me.id)
+    .bind(&req.target_kind)
+    .bind(&req.target_id)
+    .bind(&req.reason)
+    .execute(&state.db)
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "reported": true })))
+}
+
+// 拉黑用户：拉黑后信息流/详情中不再看到对方内容。
+pub async fn block_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let me = current_user(&state, &headers).await?;
+    if me.id == user_id {
+        return Err(AppError::BadRequest("不能拉黑自己".to_string()));
+    }
+    sqlx::query(
+        "INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(&me.id)
+    .bind(&user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "blocked": true })))
+}
+
+// 取消拉黑。
+pub async fn unblock_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let me = current_user(&state, &headers).await?;
+    sqlx::query("DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2")
+        .bind(&me.id)
+        .bind(&user_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "blocked": false })))
+}
+
 pub async fn media(
     State(state): State<AppState>,
     Path(path): Path<String>,

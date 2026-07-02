@@ -116,7 +116,8 @@ pub async fn list_public(
                EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $1 AND f.followee_id = m.user_id) AS followed_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
-        WHERE m.status = 'public' OR (m.user_id = $1 AND m.status = 'submitted')
+        WHERE (m.status = 'public' OR (m.user_id = $1 AND m.status = 'submitted'))
+          AND m.user_id NOT IN (SELECT blocked_id FROM user_blocks WHERE blocker_id = $1)
         ORDER BY m.created_at DESC
         LIMIT $2 OFFSET $3
         "#,

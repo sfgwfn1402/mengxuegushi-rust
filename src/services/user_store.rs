@@ -417,3 +417,40 @@ pub async fn mark_reminded(db: &PgPool, user_id: &str) -> Result<(), AppError> {
     .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(())
 }
+
+/// 注销账号：在一个事务里删除该用户的全部数据后删除用户本人。
+/// 带 ON DELETE CASCADE 的表（favorites / user_checkins / user_stats /
+/// poem_artworks(+likes) / user_recitations(+likes) / content_reports /
+/// user_blocks 等）随 users 删除自动清理；其余无级联的表在此显式清理。
+pub async fn delete_account(db: &PgPool, user_id: &str) -> Result<(), AppError> {
+    let mut tx = db.begin().await.map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // 无级联到 users 的表，需显式删除（child-first）。
+    for sql in [
+        "DELETE FROM moment_likes WHERE user_id = $1",
+        "DELETE FROM moment_comments WHERE user_id = $1",
+        "DELETE FROM moments WHERE user_id = $1",
+        "DELETE FROM user_follows WHERE follower_id = $1 OR followee_id = $1",
+        "DELETE FROM user_poem_progress WHERE user_id = $1",
+        "DELETE FROM user_idiom_progress WHERE user_id = $1",
+        "DELETE FROM user_daily_tasks WHERE user_id = $1",
+        "DELETE FROM events WHERE user_id = $1",
+    ] {
+        sqlx::query(sql)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+    }
+
+    // 删除用户本人：级联清理 favorites / user_checkins / user_stats /
+    // poem_artworks(+likes) / user_recitations(+likes) / content_reports / user_blocks。
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(())
+}

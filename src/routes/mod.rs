@@ -96,7 +96,10 @@ pub fn api_routes() -> Router<AppState> {
         .route("/auth/dev-login", post(auth::dev_login))
         .route("/auth/register", post(auth::account_register))
         .route("/auth/login", post(auth::account_login))
-        .route("/me", get(me::me).post(me::update_profile))
+        .route(
+            "/me",
+            get(me::me).post(me::update_profile).delete(me::delete_account),
+        )
         .route("/me/avatar", post(me::upload_avatar))
         .route("/me/stats", get(me::stats))
         .route("/me/checkin", post(me::checkin))
@@ -134,6 +137,11 @@ pub fn api_routes() -> Router<AppState> {
             "/users/{user_id}/follow",
             post(moments::follow_user).delete(moments::unfollow_user),
         )
+        .route(
+            "/users/{user_id}/block",
+            post(moments::block_user).delete(moments::unblock_user),
+        )
+        .route("/reports", post(moments::report_content))
         .route("/admin/moments", get(admin::list_moments))
         .route("/admin/moments/{moment_id}/review", post(admin::review_moment))
         .route("/admin/send-reminders", post(admin::send_reminders))

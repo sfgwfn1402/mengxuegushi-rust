@@ -225,6 +225,16 @@ pub async fn clear_data(
     Ok(Json(activity_store::get_stats(&state.db, &user.id).await?))
 }
 
+// 注销账号：删除用户及其全部数据。不可恢复。
+pub async fn delete_account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    crate::services::user_store::delete_account(&state.db, &user.id).await?;
+    Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
 pub async fn list_progress(
     State(state): State<AppState>,
     headers: HeaderMap,
