@@ -21,6 +21,7 @@ use crate::AppState;
 
 pub fn api_routes() -> Router<AppState> {
     Router::new()
+        .route("/app-config", get(home::app_config))
         .route("/home/community-stats", get(home::community_stats))
         .route("/home/today-poem", get(home::today_poem))
         .route("/home/continue-learning", get(home::continue_learning))

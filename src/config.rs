@@ -21,6 +21,8 @@ pub struct AppConfig {
     pub featured_recitation_min_likes: i32,
     pub admin_token: Option<String>,
     pub funasr_score_url: Option<String>,
+    /// 社区/动态(UGC) 功能总开关。备案受阻时可在 .env 关闭后重启服务，无需重新发版。
+    pub community_enabled: bool,
 }
 
 impl AppConfig {
@@ -89,6 +91,11 @@ impl AppConfig {
         )
         .filter(|value| !value.trim().is_empty());
 
+        // 社区(UGC) 开关；默认开启。设 COMMUNITY_ENABLED=false 可关闭。
+        let community_enabled = std::env::var("COMMUNITY_ENABLED")
+            .map(|value| !matches!(value.as_str(), "0" | "false" | "FALSE" | "no" | "NO"))
+            .unwrap_or(true);
+
         Ok(Self {
             port,
             database_url,
@@ -108,6 +115,7 @@ impl AppConfig {
             featured_recitation_min_likes,
             admin_token,
             funasr_score_url,
+            community_enabled,
         })
     }
 }

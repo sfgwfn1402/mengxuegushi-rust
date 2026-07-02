@@ -16,6 +16,14 @@ use crate::{
     AppState,
 };
 
+// 公开接口，无需登录：客户端启动时拉取的功能开关配置。
+// community_enabled 关闭时，客户端隐藏社区/动态(UGC) 入口（备案受阻时的应急开关）。
+pub async fn app_config(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "community_enabled": state.config.community_enabled,
+    }))
+}
+
 // 公开接口，无需登录：首页人气展示
 pub async fn community_stats(
     State(state): State<AppState>,
