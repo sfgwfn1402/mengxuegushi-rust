@@ -761,6 +761,28 @@ ALTER TABLE poems ADD COLUMN audio_timeline JSONB;
 
 按时间倒序记录每次生产发布的关键改动、验证方式，以及需要人工执行的一次性数据迁移。
 
+### 2026-07-05 修复：图片上传失败（axum 默认请求体上限 2MB）
+
+**现象**：小程序/App 发动态选大图或多图时报“图片上传失败”。
+
+**根因**：`src/main.rs` 未设置 `DefaultBodyLimit`，axum 默认请求体上限仅 2MB。而 `upload_image` handler 内部的应用级检查是 8MB（`moments.rs`），两者不一致——2~8MB 的图在到达应用检查前就被 axum 的 2MB 上限拦掉，返回 multipart 解析错误。nginx 层 `client_max_body_size` 已是 100m，不是瓶颈。
+
+**代码改动**：`src/main.rs` 增加 `.layer(DefaultBodyLimit::max(20 * 1024 * 1024))`（20MB），高于应用级 8MB 检查，让 8MB 成为唯一有效上限。
+
+**发布方式**：标准流程（本文档第 5 章），无数据迁移。
+
+**验证**：
+
+```bash
+# 用有效 token 传一张 >2MB（<8MB）的图，应返回 object_path 而非 400
+curl -s -X POST http://127.0.0.1:8080/api/moments/upload-image \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@big.jpg;type=image/jpeg;filename=image.jpg"
+# 已实测：2.24MB → 200 object_path；12.4MB → 400 "file too large"（命中应用级 8MB，符合预期）
+```
+
+**客户端配合**：iOS 端上传前已将图片缩到最长边 1600px（`MengxueGushi/Media/ImageCache.swift` 的 `UIImage.downscaled`），正常照片压缩后约 200KB~1MB，远低于上限。
+
 ### 2026-07-04 修复：点赞非 public 动态时 like_count 不递增（红心显示 0）
 
 **现象**：用户给自己的待审核（`submitted`）动态点赞后，红心亮起（`liked_by_me=true`）但计数停在 0。

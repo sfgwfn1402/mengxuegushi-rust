@@ -8,7 +8,7 @@ mod services;
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Context;
-use axum::{middleware, Router};
+use axum::{extract::DefaultBodyLimit, middleware, Router};
 use config::AppConfig;
 use ip_guard::IpGuard;
 use sqlx::postgres::PgPoolOptions;
@@ -85,6 +85,9 @@ async fn main() -> anyhow::Result<()> {
             ip_guard,
             ip_guard::ip_guard_middleware,
         ))
+        // axum 默认请求体上限仅 2MB，手机原图/多图上传会 400。
+        // nginx 层已放行 100MB，这里放宽到 20MB 作为合理上限。
+        .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
