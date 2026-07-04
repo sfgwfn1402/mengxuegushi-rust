@@ -769,7 +769,7 @@ ALTER TABLE poems ADD COLUMN audio_timeline JSONB;
 
 **代码改动**：去掉该守卫，使 `like_count` 始终与 `moment_likes` 行数一致。
 
-**发布方式**：标准流程（本节第 5 章）。可直接使用仓库根同级的 `deploy_moment_like_fix.sh`（rsync → 服务器编译 → 备份 → 原子替换 → 重启 → 验证 → backfill）。
+**发布方式**：标准流程（本文档第 5 章：rsync → 服务器编译 → 备份 → 原子替换 → 重启 → 验证），SSH 目标 `ubuntu@192.144.133.222`。发布完成后执行下方 backfill。
 
 **一次性数据迁移（backfill）**：修复只防止新增坏数据，历史已存在的错误计数需重算一次。幂等，可重复执行：
 
