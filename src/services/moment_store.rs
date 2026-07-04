@@ -374,7 +374,11 @@ pub async fn like_moment(
     .rows_affected();
 
     if inserted > 0 {
-        sqlx::query("UPDATE moments SET like_count = like_count + 1 WHERE id = $1 AND status = 'public'")
+        // No status guard here: a `moment_likes` row was just inserted, so the
+        // counter must move with it to stay consistent (the unlike path below
+        // also decrements unconditionally). The old `AND status = 'public'`
+        // clause left own/submitted moments with liked_by_me=true but count 0.
+        sqlx::query("UPDATE moments SET like_count = like_count + 1 WHERE id = $1")
             .bind(moment_id)
             .execute(db)
             .await
