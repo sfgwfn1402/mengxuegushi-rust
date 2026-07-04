@@ -167,7 +167,7 @@ pub async fn upload(
         relative_path
     );
 
-    let item = recitation_store::create_recitation(
+    let (item, old_object_paths) = recitation_store::create_recitation(
         &state.db,
         &user.id,
         poem_id,
@@ -176,6 +176,15 @@ pub async fn upload(
         duration_seconds,
     )
     .await?;
+
+    // 物理删除被替换的旧朗诵文件（best-effort，失败只告警不影响发布）。
+    for p in old_object_paths {
+        if p != object_path {
+            if let Err(err) = minio_store::delete_object(&state.config, &p).await {
+                tracing::warn!(object = %p, error = %err, "replaced recitation minio delete failed");
+            }
+        }
+    }
 
     Ok(Json(item))
 }

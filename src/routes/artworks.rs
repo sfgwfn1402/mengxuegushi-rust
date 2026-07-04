@@ -142,18 +142,27 @@ pub async fn upload(
         format!("/artworks/{}", object_path.trim_start_matches("artworks/"))
     };
 
-    Ok(Json(
-        artwork_store::create_artwork(
-            &state.db,
-            &user.id,
-            poem_id,
-            &title,
-            description.as_deref(),
-            &image_url,
-            &object_path,
-        )
-        .await?,
-    ))
+    let (item, old_object_paths) = artwork_store::create_artwork(
+        &state.db,
+        &user.id,
+        poem_id,
+        &title,
+        description.as_deref(),
+        &image_url,
+        &object_path,
+    )
+    .await?;
+
+    // 物理删除被替换的旧诗配画文件（best-effort，失败只告警不影响发布）。
+    for p in old_object_paths {
+        if p != object_path {
+            if let Err(err) = minio_store::delete_object(&state.config, &p).await {
+                tracing::warn!(object = %p, error = %err, "replaced artwork minio delete failed");
+            }
+        }
+    }
+
+    Ok(Json(item))
 }
 
 pub async fn detail(

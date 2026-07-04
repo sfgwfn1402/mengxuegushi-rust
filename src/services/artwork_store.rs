@@ -9,6 +9,9 @@ use crate::{
     },
 };
 
+/// 发布诗配画：每首诗每人只保留一个作品。物理删除该 (user, poem) 之前的所有诗配画
+/// （点赞经 FK ON DELETE CASCADE 一并删除），再插入新的。返回 (新作品, 被删旧作品的
+/// object_path 列表)，由路由层清理 MinIO 文件。
 pub async fn create_artwork(
     db: &PgPool,
     user_id: &str,
@@ -17,8 +20,30 @@ pub async fn create_artwork(
     description: Option<&str>,
     image_url: &str,
     object_path: &str,
-) -> Result<ArtworkItem, AppError> {
+) -> Result<(ArtworkItem, Vec<String>), AppError> {
     let id = Uuid::new_v4().to_string();
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    // 先取旧作品的 object_path（用于删 MinIO），再物理删除旧行。
+    let old_object_paths: Vec<String> = sqlx::query_scalar(
+        "SELECT object_path FROM poem_artworks WHERE user_id = $1 AND poem_id = $2",
+    )
+    .bind(user_id)
+    .bind(poem_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    sqlx::query("DELETE FROM poem_artworks WHERE user_id = $1 AND poem_id = $2")
+        .bind(user_id)
+        .bind(poem_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+
     sqlx::query(
         r#"
         INSERT INTO poem_artworks (id, user_id, poem_id, title, description, image_url, object_path)
@@ -32,11 +57,16 @@ pub async fn create_artwork(
     .bind(description)
     .bind(image_url)
     .bind(object_path)
-    .execute(db)
+    .execute(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
 
-    get_artwork(db, &id, Some(user_id)).await
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    let item = get_artwork(db, &id, Some(user_id)).await?;
+    Ok((item, old_object_paths))
 }
 
 pub async fn list_recent(

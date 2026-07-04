@@ -7,6 +7,9 @@ use crate::{
     models::recitation::{LikeResponse, RecitationItem},
 };
 
+/// 发布朗诵：每首诗每人只保留一个作品。物理删除该 (user, poem) 之前的所有朗诵
+/// （点赞经 FK ON DELETE CASCADE 一并删除），再插入新的。返回 (新作品, 被删旧作品的
+/// object_path 列表)，由路由层清理 MinIO 文件。
 pub async fn create_recitation(
     db: &PgPool,
     user_id: &str,
@@ -14,25 +17,29 @@ pub async fn create_recitation(
     audio_url: &str,
     object_path: &str,
     duration_seconds: Option<i32>,
-) -> Result<RecitationItem, AppError> {
+) -> Result<(RecitationItem, Vec<String>), AppError> {
     let id = Uuid::new_v4().to_string();
     let mut tx = db
         .begin()
         .await
         .map_err(|err| AppError::Internal(err.to_string()))?;
 
-    sqlx::query(
-        r#"
-        UPDATE user_recitations
-        SET status = 'replaced', updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = $1 AND poem_id = $2 AND status = 'active'
-        "#,
+    // 先取旧作品的 object_path（用于删 MinIO），再物理删除旧行。
+    let old_object_paths: Vec<String> = sqlx::query_scalar(
+        "SELECT object_path FROM user_recitations WHERE user_id = $1 AND poem_id = $2",
     )
     .bind(user_id)
     .bind(poem_id)
-    .execute(&mut *tx)
+    .fetch_all(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    sqlx::query("DELETE FROM user_recitations WHERE user_id = $1 AND poem_id = $2")
+        .bind(user_id)
+        .bind(poem_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
 
     sqlx::query(
         r#"
@@ -55,7 +62,8 @@ pub async fn create_recitation(
         .await
         .map_err(|err| AppError::Internal(err.to_string()))?;
 
-    get_recitation(db, &id, Some(user_id)).await
+    let item = get_recitation(db, &id, Some(user_id)).await?;
+    Ok((item, old_object_paths))
 }
 
 pub async fn get_recitation(

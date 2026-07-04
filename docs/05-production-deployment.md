@@ -761,6 +761,31 @@ ALTER TABLE poems ADD COLUMN audio_timeline JSONB;
 
 按时间倒序记录每次生产发布的关键改动、验证方式，以及需要人工执行的一次性数据迁移。
 
+### 2026-07-05 变更：每首诗每人只保留一个作品（发布即物理替换）
+
+**需求**：创作页发布朗诵/诗配画时，每首诗每人只保留一个作品，新作品物理替换旧作品。
+
+**代码改动**：
+- `recitation_store::create_recitation`：原本软删旧作品（`status='replaced'`），改为物理 `DELETE` 该 (user, poem) 的所有旧朗诵，返回旧 `object_path` 列表。
+- `artwork_store::create_artwork`：原本无替换（每次新 INSERT），改为先物理 `DELETE` 该 (user, poem) 的所有旧诗配画再插入，返回旧 `object_path` 列表。
+- 两处路由（`routes/recitations.rs`、`routes/artworks.rs`）在发布后清理被替换作品的 MinIO 文件（best-effort）。
+- 点赞经 FK `ON DELETE CASCADE` 自动删除，无孤儿点赞。
+
+**发布方式**：标准流程（第 5 章）。
+
+**一次性数据迁移（存量去重）**：新逻辑只保证之后一诗一作品；历史遗留（诗配画曾无替换导致重复、朗诵历史 `replaced` 软删残留）需一次性清理。已于 2026-07-05 执行，删除 33 行（朗诵软删 23 + 朗诵重复 4 + 诗配画软删 4 + 诗配画重复 2），保留每 (user,poem) 最新一条。被删作品的 `object_path` 已导出至 `/opt/mengxuegushi/orphan-objects-dedup.txt`（服务器无 `mc`，MinIO 孤儿文件暂未清理，无害）。去重 SQL 见提交记录；核心逻辑：
+
+```sql
+-- 每类：物理删软删残留 + 按 (user,poem) 保留 created_at 最新、删其余
+DELETE FROM user_recitations WHERE status IN ('replaced','deleted');
+DELETE FROM user_recitations WHERE id IN (
+  SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id,poem_id ORDER BY created_at DESC) rn
+                  FROM user_recitations WHERE status IN ('active','submitted','public','rejected')) x WHERE rn>1);
+-- poem_artworks 同理
+```
+
+**验证**：`SELECT ... GROUP BY user_id,poem_id HAVING COUNT(*)>1` 应为 0 行。
+
 ### 2026-07-05 修复：图片上传失败（axum 默认请求体上限 2MB）
 
 **现象**：小程序/App 发动态选大图或多图时报“图片上传失败”。
