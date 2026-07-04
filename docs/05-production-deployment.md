@@ -756,3 +756,34 @@ ALTER TABLE poems ADD COLUMN audio_timeline JSONB;
 - 不要在生产 API 请求链路里实时跑识别，CPU/内存开销和响应时间都不可控。
 - 识别结果不是 100% 准确，尤其是作者、朝代、停顿和背景音乐较重的音频，必须做匹配校验。
 - `timestamp` 和 `raw_text` 的粒度可能不是严格逐字，入库前需要按前端展示需求做一次规整。
+
+## 15. 变更记录（含数据迁移）
+
+按时间倒序记录每次生产发布的关键改动、验证方式，以及需要人工执行的一次性数据迁移。
+
+### 2026-07-04 修复：点赞非 public 动态时 like_count 不递增（红心显示 0）
+
+**现象**：用户给自己的待审核（`submitted`）动态点赞后，红心亮起（`liked_by_me=true`）但计数停在 0。
+
+**根因**：`src/services/moment_store.rs` 的 `like_moment()` 在插入 `moment_likes` 行后，`UPDATE moments SET like_count = like_count + 1` 带了 `AND status = 'public'` 守卫。非 public 动态（如本人可见的 submitted）不满足条件，计数不递增；而 `unlike_moment()` 无此守卫，二者不对称，导致点赞计数与 `moment_likes` 行数长期不一致。
+
+**代码改动**：去掉该守卫，使 `like_count` 始终与 `moment_likes` 行数一致。
+
+**发布方式**：标准流程（本节第 5 章）。可直接使用仓库根同级的 `deploy_moment_like_fix.sh`（rsync → 服务器编译 → 备份 → 原子替换 → 重启 → 验证 → backfill）。
+
+**一次性数据迁移（backfill）**：修复只防止新增坏数据，历史已存在的错误计数需重算一次。幂等，可重复执行：
+
+```bash
+set -a; . /opt/mengxuegushi/.env; set +a
+psql "$DATABASE_URL" -c \
+  'UPDATE moments m SET like_count = (SELECT COUNT(*) FROM moment_likes l WHERE l.moment_id = m.id);'
+```
+
+**验证**：
+
+```bash
+# 取一条已知被点赞的动态，确认 like_count 与实际点赞数一致
+curl -s http://127.0.0.1:8080/api/moments?page=1&page_size=5 | python3 -m json.tool
+```
+
+**回滚**：若异常，按第 12 章用 `mengxuegushi-rust.bak.*` 回滚二进制；backfill 为纯重算、无需回滚。
