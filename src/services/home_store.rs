@@ -322,10 +322,13 @@ pub async fn community_stats(db: &PgPool) -> Result<(i64, i64, i64), AppError> {
     Ok(row)
 }
 
-/// 首页 3D 地球：总注册人数 + 最近活跃的 100 位真实用户（在球面上画小圆点）。
-/// 「最近活跃」= 各业务表中该用户的最新行为时间（学习/成语/打卡/每日任务/朗诵/动态/评论）
-/// 与 users.updated_at（注册、资料更新）取最大值。目前没有实时在线状态，
-/// 「人数」展示的是累计注册用户数，不是实时在线数。
+/// 首页 3D 地球：总注册人数 + 在球面上展示的真实活跃用户（最多 100 位）。
+/// 展示规则（与产品约定）：
+/// - 只展示「有过真实行为」的用户（学习/成语/打卡/每日任务/朗诵/动态/评论），
+///   注册后零行为的僵尸号不上球；
+/// - 排序：今天（Asia/Shanghai）活跃的用户排在最前，其余按最近活跃时间补齐，
+///   保证球面始终有真实用户、永远不空；
+/// - 「人数」展示的仍是累计注册用户数，不是实时在线数。
 pub async fn online_globe(
     db: &PgPool,
 ) -> Result<(i64, Vec<(String, Option<String>, Option<String>)>), AppError> {
@@ -337,7 +340,7 @@ pub async fn online_globe(
         r#"
         SELECT u.id, u.nickname, u.avatar_url
         FROM users u
-        LEFT JOIN (
+        JOIN (
             SELECT user_id, MAX(ts) AS last_active_at
             FROM (
                 SELECT user_id, updated_at AS ts FROM user_poem_progress
@@ -358,7 +361,10 @@ pub async fn online_globe(
             ) acts
             GROUP BY user_id
         ) a ON a.user_id = u.id
-        ORDER BY GREATEST(u.updated_at, COALESCE(a.last_active_at, u.updated_at)) DESC
+        ORDER BY
+            ((a.last_active_at AT TIME ZONE 'Asia/Shanghai')::date
+                = (NOW() AT TIME ZONE 'Asia/Shanghai')::date) DESC,
+            a.last_active_at DESC
         LIMIT 100
         "#,
     )
