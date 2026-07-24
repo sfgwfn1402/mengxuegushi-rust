@@ -761,6 +761,23 @@ ALTER TABLE poems ADD COLUMN audio_timeline JSONB;
 
 按时间倒序记录每次生产发布的关键改动、验证方式，以及需要人工执行的一次性数据迁移。
 
+### 2026-07-24 变更：首页 3D 地球改为最新活跃 100 位真实用户
+
+**需求**：大球展示的用户从「按 users.updated_at 取 60 位」改为「按真实活跃度取最新 100 位」。
+
+**代码改动**：`src/services/home_store.rs::online_globe`
+- 数量：60 → 100。
+- 排序：`users.updated_at`（仅资料更新才变化）改为真实活跃时间——汇总每个用户在
+  user_poem_progress / user_idiom_progress / user_checkins / user_daily_tasks / user_stats /
+  user_recitations / moments / moment_comments 中的最新行为时间，与 users.updated_at 取
+  GREATEST 后倒序；无任何活跃记录的用户按注册/资料更新时间排在最后。
+- iOS 客户端无逻辑改动（本就优先用真实接口、失败才走本地 mock），仅注释同步。
+
+**发布方式**：标准流程（第 5 章），SSH 目标 `ubuntu@192.144.133.222`。无数据迁移。
+
+**验证**：`curl https://www.duwei.cloud/api/home/online-globe` 返回 users 长度 = min(100, 总注册数)；
+发布时总注册 85，实返 85，按最近活跃排序。
+
 ### 2026-07-05 变更：每首诗每人只保留一个作品（发布即物理替换）
 
 **需求**：创作页发布朗诵/诗配画时，每首诗每人只保留一个作品，新作品物理替换旧作品。

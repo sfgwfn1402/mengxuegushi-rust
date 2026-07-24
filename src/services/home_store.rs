@@ -321,3 +321,49 @@ pub async fn community_stats(db: &PgPool) -> Result<(i64, i64, i64), AppError> {
     .map_err(|err| AppError::Internal(err.to_string()))?;
     Ok(row)
 }
+
+/// 首页 3D 地球：总注册人数 + 最近活跃的 100 位真实用户（在球面上画小圆点）。
+/// 「最近活跃」= 各业务表中该用户的最新行为时间（学习/成语/打卡/每日任务/朗诵/动态/评论）
+/// 与 users.updated_at（注册、资料更新）取最大值。目前没有实时在线状态，
+/// 「人数」展示的是累计注册用户数，不是实时在线数。
+pub async fn online_globe(
+    db: &PgPool,
+) -> Result<(i64, Vec<(String, Option<String>, Option<String>)>), AppError> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*)::BIGINT FROM users")
+        .fetch_one(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+    let users = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+        r#"
+        SELECT u.id, u.nickname, u.avatar_url
+        FROM users u
+        LEFT JOIN (
+            SELECT user_id, MAX(ts) AS last_active_at
+            FROM (
+                SELECT user_id, updated_at AS ts FROM user_poem_progress
+                UNION ALL
+                SELECT user_id, updated_at FROM user_idiom_progress
+                UNION ALL
+                SELECT user_id, created_at FROM user_checkins
+                UNION ALL
+                SELECT user_id, created_at FROM user_daily_tasks
+                UNION ALL
+                SELECT user_id, updated_at FROM user_stats
+                UNION ALL
+                SELECT user_id, created_at FROM user_recitations
+                UNION ALL
+                SELECT user_id, created_at FROM moments
+                UNION ALL
+                SELECT user_id, created_at FROM moment_comments
+            ) acts
+            GROUP BY user_id
+        ) a ON a.user_id = u.id
+        ORDER BY GREATEST(u.updated_at, COALESCE(a.last_active_at, u.updated_at)) DESC
+        LIMIT 100
+        "#,
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    Ok((count, users))
+}
