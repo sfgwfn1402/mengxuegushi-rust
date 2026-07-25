@@ -70,20 +70,70 @@ async fn upsert_transaction(
     Ok(())
 }
 
-/// 当前会员资格：有未撤销且未过期的订阅记录即会员。
+/// App Store Server Notifications V2 回调：验签 → 把通知携带的最新交易状态合并进已有记录。
+/// 退款（REFUND）/撤销（REVOKE）通知的交易带 revocationDate，更新后 entitlement 立即失效；
+/// DID_RENEW 等通知带新 expiresDate，更新后续期。
+/// 只 UPDATE 不 INSERT：行不存在（通知先于客户端上报到达）时跳过——
+/// 客户端下次启动/恢复购买会补报全量状态。
+/// 返回通知类型（供路由层记录/响应）。
+pub async fn handle_apple_notification(db: &PgPool, signed_payload: &str) -> Result<String, AppError> {
+    let n = apple_iap::verify_notification(signed_payload).map_err(AppError::BadRequest)?;
+    if let Some(tx) = &n.transaction {
+        let r = sqlx::query(
+            r#"
+            UPDATE user_subscriptions SET
+                transaction_id = $2,
+                product_id = $3,
+                purchase_at = $4,
+                expires_at = $5,
+                revoked_at = $6,
+                environment = $7,
+                signed_transaction = $8,
+                updated_at = NOW()
+            WHERE original_transaction_id = $1
+            "#,
+        )
+        .bind(&tx.original_transaction_id)
+        .bind(&tx.transaction_id)
+        .bind(&tx.product_id)
+        .bind(tx.purchase_at)
+        .bind(tx.expires_at)
+        .bind(tx.revoked_at)
+        .bind(&tx.environment)
+        .bind(signed_payload)
+        .execute(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+        if r.rows_affected() == 0 {
+            tracing::warn!(
+                notification_type = %n.notification_type,
+                original_transaction_id = %tx.original_transaction_id,
+                "apple notification for unknown transaction, skipped (client will report later)"
+            );
+        }
+    }
+    tracing::info!(notification_type = %n.notification_type, subtype = ?n.subtype, "apple notification processed");
+    Ok(n.notification_type)
+}
+
+/// 当前会员资格：有未撤销且未过期的**会员商品**订阅记录即会员。
 /// 每月/每年订阅必有 expires_at；NULL（理论上的买断）按永久会员处理。
+/// product_id 白名单过滤：将来接入消耗品/其他内购后，其记录不会误判为会员。
 pub async fn entitlement(db: &PgPool, user_id: &str) -> Result<EntitlementResponse, AppError> {
     let row = sqlx::query_as::<_, (String, Option<chrono::DateTime<chrono::Utc>>, String)>(
         r#"
         SELECT product_id, expires_at, environment
         FROM user_subscriptions
         WHERE user_id = $1
+          AND product_id = ANY($2)
           AND revoked_at IS NULL
           AND (expires_at IS NULL OR expires_at > NOW())
         ORDER BY expires_at DESC NULLS FIRST
         LIMIT 1
         "#,
     )
+    .bind(user_id)
+    .bind(&apple_iap::PREMIUM_PRODUCT_IDS[..])
     .bind(user_id)
     .fetch_optional(db)
     .await

@@ -3,6 +3,7 @@ pub mod artworks;
 pub mod auth;
 pub mod feedback;
 pub mod health;
+pub mod iap;
 pub mod me;
 pub mod media;
 pub mod messages;
@@ -169,6 +170,7 @@ pub fn api_routes() -> Router<AppState> {
         .route("/me/clear-data", post(me::clear_data))
         .route("/me/progress", get(me::list_progress))
         .route("/me/subscription/report", post(me::report_subscription))
+        .route("/iap/notifications", post(iap::apple_notifications))
         .route("/me/entitlement", get(me::entitlement))
         .route("/me/quota/start-poem", post(me::quota_start_poem))
         .route("/me/quota/record-creation", post(me::quota_record_creation))

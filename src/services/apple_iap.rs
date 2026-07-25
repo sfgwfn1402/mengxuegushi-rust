@@ -15,6 +15,13 @@ const APPLE_ROOT_G3_DER: &[u8] = include_bytes!("certs/AppleRootCA-G3.cer");
 /// 本 App 的 bundle id，payload 不符即拒绝（防止别的 App 的交易混进来）
 const EXPECTED_BUNDLE_ID: &str = "com.duwei.mengxuegushi";
 
+/// 会员商品 id 白名单：只有这两个 productId 的订阅记录才给会员资格
+/// （防止将来接入消耗品/其他内购后，任意 bundle 内商品都被当成会员）。
+pub const PREMIUM_PRODUCT_IDS: [&str; 2] = [
+    "com.duwei.mengxuegushi.premium.annual",
+    "com.duwei.mengxuegushi.premium.monthly",
+];
+
 #[derive(Debug, Clone)]
 pub struct VerifiedTransaction {
     pub transaction_id: String,
@@ -50,6 +57,33 @@ struct TransactionPayload {
     environment: Option<String>,
 }
 
+/// App Store Server Notifications V2 验签结果。
+#[derive(Debug, Clone)]
+pub struct VerifiedNotification {
+    pub notification_type: String,
+    pub subtype: Option<String>,
+    /// 通知携带的最新交易状态（TEST 通知没有，为 None）。
+    pub transaction: Option<VerifiedTransaction>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationPayload {
+    notification_type: String,
+    #[serde(default)]
+    subtype: Option<String>,
+    #[serde(default)]
+    data: Option<NotificationData>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationData {
+    bundle_id: String,
+    #[serde(default)]
+    signed_transaction_info: Option<String>,
+}
+
 fn ms_to_ts(ms: Option<i64>) -> Option<chrono::DateTime<chrono::Utc>> {
     ms.and_then(|v| chrono::DateTime::from_timestamp_millis(v))
 }
@@ -59,12 +93,37 @@ pub fn verify_signed_transaction(jws: &str) -> Result<VerifiedTransaction, Strin
     verify_signed_transaction_with_root(jws, APPLE_ROOT_G3_DER)
 }
 
-/// 与上一函数相同，但根证书可注入——便于单元测试用自签 CA 构造完整链路。
-fn verify_signed_transaction_with_root(jws: &str, root_der: &[u8]) -> Result<VerifiedTransaction, String> {
+/// 验证 App Store Server Notifications V2 的 signedPayload：
+/// 外层通知 JWS 验签 → 校验 bundleId → 内层 signedTransactionInfo（交易 JWS）再验签。
+pub fn verify_notification(signed_payload: &str) -> Result<VerifiedNotification, String> {
+    verify_notification_with_root(signed_payload, APPLE_ROOT_G3_DER)
+}
+
+/// 两段式 JWS 验证：先（不验签）解码 payload 取参考时间，再验证书链 + ES256 签名，返回可信 payload。
+///
+/// 证书有效期必须按**交易发生时点**（purchaseDate / 通知的 signedDate）校验，而不是当前时间：
+/// 「恢复购买」上报的是历史交易，Apple 签名证书约两年一换，老交易的证书拿到今天比对必然过期，
+/// 但它在交易发生时时点是有效的——链能验到 Apple Root + 签名有效即可信。
+fn decode_and_verify_jws_with_root(jws: &str, root_der: &[u8]) -> Result<serde_json::Value, String> {
     let parts: Vec<&str> = jws.split('.').collect();
     if parts.len() != 3 {
         return Err("JWS 格式错误（应为 header.payload.signature）".into());
     }
+
+    // 第一遍：不验签先解码 payload，只为取参考时间（此时点只用于证书有效期比对，
+    // 安全性不依赖它——伪造时间点过不了后面的链验证 + 签名验证）。
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .map_err(|e| format!("payload base64 解码失败: {e}"))?;
+    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes)
+        .map_err(|e| format!("payload JSON 解析失败: {e}"))?;
+    let reference_ts = payload
+        .get("purchaseDate")
+        .or_else(|| payload.get("signedDate"))
+        .and_then(|v| v.as_i64())
+        .map(|ms| ms / 1000)
+        .unwrap_or_else(|| chrono::Utc::now().timestamp());
+
     let header_bytes = URL_SAFE_NO_PAD
         .decode(parts[0])
         .map_err(|e| format!("header base64 解码失败: {e}"))?;
@@ -88,13 +147,12 @@ fn verify_signed_transaction_with_root(jws: &str, root_der: &[u8]) -> Result<Ver
     let (_, root) =
         X509Certificate::from_der(root_der).map_err(|e| format!("根证书解析失败: {e}"))?;
 
-    // 有效期检查（叶子 + 中间）
-    let now = chrono::Utc::now().timestamp();
+    // 有效期检查（叶子 + 中间，按交易发生时点）
     for (name, cert) in [("叶子", &leaf), ("中间", &inter)] {
         let nb = cert.validity().not_before.timestamp();
         let na = cert.validity().not_after.timestamp();
-        if now < nb || now > na {
-            return Err(format!("{name}证书不在有效期内"));
+        if reference_ts < nb || reference_ts > na {
+            return Err(format!("{name}证书在交易时点不在有效期内"));
         }
     }
 
@@ -119,12 +177,14 @@ fn verify_signed_transaction_with_root(jws: &str, root_der: &[u8]) -> Result<Ver
         .verify(signing_input.as_bytes(), &signature)
         .map_err(|_| "JWS 签名校验失败".to_string())?;
 
-    // 解码 payload
-    let payload_bytes = URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|e| format!("payload base64 解码失败: {e}"))?;
-    let payload: TransactionPayload = serde_json::from_slice(&payload_bytes)
-        .map_err(|e| format!("payload JSON 解析失败: {e}"))?;
+    Ok(payload)
+}
+
+/// 与 `verify_signed_transaction` 相同，但根证书可注入——便于单元测试用自签 CA 构造完整链路。
+fn verify_signed_transaction_with_root(jws: &str, root_der: &[u8]) -> Result<VerifiedTransaction, String> {
+    let value = decode_and_verify_jws_with_root(jws, root_der)?;
+    let payload: TransactionPayload = serde_json::from_value(value)
+        .map_err(|e| format!("交易 payload 字段解析失败: {e}"))?;
 
     if payload.bundle_id != EXPECTED_BUNDLE_ID {
         return Err(format!("bundleId 不匹配: {}", payload.bundle_id));
@@ -139,6 +199,32 @@ fn verify_signed_transaction_with_root(jws: &str, root_der: &[u8]) -> Result<Ver
         expires_at: ms_to_ts(payload.expires_date),
         revoked_at: ms_to_ts(payload.revocation_date),
         environment: payload.environment.unwrap_or_else(|| "Production".to_string()),
+    })
+}
+
+/// 与 `verify_notification` 相同，但根证书可注入。
+fn verify_notification_with_root(signed_payload: &str, root_der: &[u8]) -> Result<VerifiedNotification, String> {
+    let value = decode_and_verify_jws_with_root(signed_payload, root_der)?;
+    let payload: NotificationPayload = serde_json::from_value(value)
+        .map_err(|e| format!("通知 payload 字段解析失败: {e}"))?;
+
+    let transaction = match &payload.data {
+        Some(data) => {
+            if data.bundle_id != EXPECTED_BUNDLE_ID {
+                return Err(format!("bundleId 不匹配: {}", data.bundle_id));
+            }
+            data.signed_transaction_info
+                .as_deref()
+                .map(|jws| verify_signed_transaction_with_root(jws, root_der))
+                .transpose()?
+        }
+        None => None,   // TEST 通知没有 data
+    };
+
+    Ok(VerifiedNotification {
+        notification_type: payload.notification_type,
+        subtype: payload.subtype,
+        transaction,
     })
 }
 
@@ -184,13 +270,14 @@ mod tests {
             "openssl x509 -in {d}/inter.crt -outform DER | base64"))).unwrap().replace('\n', "");
         let root_der = std::fs::read(dir.join("root.der")).unwrap();
 
-        // 构造 JWS
+        // 构造 JWS（purchaseDate 用当前时间：证书有效期按交易时点校验，时间必须落在证书有效期内）
         let b64u = |data: &[u8]| URL_SAFE_NO_PAD.encode(data);
+        let now_ms = chrono::Utc::now().timestamp_millis();
         let header = serde_json::json!({"alg":"ES256","x5c":[leaf_b64, inter_b64]});
         let payload = serde_json::json!({
             "transactionId":"10001","originalTransactionId":"10000",
             "bundleId":"com.duwei.mengxuegushi","productId":"com.duwei.mengxuegushi.premium.annual",
-            "purchaseDate":1753400000000i64,"expiresDate":1785000000000i64,
+            "purchaseDate":now_ms,"expiresDate":now_ms + 365*24*3600*1000i64,
             "environment":"Xcode"
         });
         let signing_input = format!("{}.{}", b64u(header.to_string().as_bytes()), b64u(payload.to_string().as_bytes()));
@@ -236,6 +323,57 @@ mod tests {
         let jws2 = format!("{input2}.{}", sig2.trim());
         let err = verify_signed_transaction_with_root(&jws2, &root_der).unwrap_err();
         assert!(err.contains("bundleId"), "应因 bundleId 拒绝，实际: {err}");
+
+        // 正例 4：App Store 服务端通知（REFUND）——外层通知 JWS 验签 + 内层交易 JWS 再验签。
+        // 退款后交易带 revocationDate，落库即撤销会员。
+        let revoked_tx = serde_json::json!({
+            "transactionId":"10003","originalTransactionId":"10000",
+            "bundleId":"com.duwei.mengxuegushi","productId":"com.duwei.mengxuegushi.premium.annual",
+            "purchaseDate":now_ms,"expiresDate":now_ms + 365*24*3600*1000i64,
+            "revocationDate":now_ms,"environment":"Production"
+        });
+        let revoked_input = format!("{}.{}", b64u(header.to_string().as_bytes()), b64u(revoked_tx.to_string().as_bytes()));
+        std::fs::write(dir.join("msg3.bin"), &revoked_input).unwrap();
+        sh(&format!("openssl dgst -sha256 -sign {d}/leaf.key -out {d}/sig3.der {d}/msg3.bin"));
+        let sig3 = String::from_utf8(sh(&format!(
+            "python3 -c \"from pathlib import Path; d=Path('{d}/sig3.der').read_bytes(); \
+             l1=d[3]; r=d[4:4+l1]; o=4+l1; l2=d[o+1]; s=d[o+2:o+2+l2]; \
+             r=r.lstrip(b'\\x00').rjust(32,b'\\x00'); s=s.lstrip(b'\\x00').rjust(32,b'\\x00'); \
+             import base64; print(base64.urlsafe_b64encode(r+s).decode().rstrip('='))\""))).unwrap();
+        let revoked_jws = format!("{revoked_input}.{}", sig3.trim());
+        let notif = serde_json::json!({
+            "notificationType":"REFUND",
+            "data":{"bundleId":"com.duwei.mengxuegushi","signedTransactionInfo":revoked_jws},
+            "signedDate":now_ms
+        });
+        let notif_input = format!("{}.{}", b64u(header.to_string().as_bytes()), b64u(notif.to_string().as_bytes()));
+        std::fs::write(dir.join("msg4.bin"), &notif_input).unwrap();
+        sh(&format!("openssl dgst -sha256 -sign {d}/leaf.key -out {d}/sig4.der {d}/msg4.bin"));
+        let sig4 = String::from_utf8(sh(&format!(
+            "python3 -c \"from pathlib import Path; d=Path('{d}/sig4.der').read_bytes(); \
+             l1=d[3]; r=d[4:4+l1]; o=4+l1; l2=d[o+1]; s=d[o+2:o+2+l2]; \
+             r=r.lstrip(b'\\x00').rjust(32,b'\\x00'); s=s.lstrip(b'\\x00').rjust(32,b'\\x00'); \
+             import base64; print(base64.urlsafe_b64encode(r+s).decode().rstrip('='))\""))).unwrap();
+        let notif_jws = format!("{notif_input}.{}", sig4.trim());
+        let n = verify_notification_with_root(&notif_jws, &root_der).expect("通知验签应通过");
+        assert_eq!(n.notification_type, "REFUND");
+        let ntx = n.transaction.expect("REFUND 通知应携带交易");
+        assert!(ntx.revoked_at.is_some(), "退款交易应带撤销时间");
+
+        // 正例 5：TEST 通知（无 data）也应通过，transaction 为 None
+        let test_notif = serde_json::json!({"notificationType":"TEST","signedDate":now_ms});
+        let test_input = format!("{}.{}", b64u(header.to_string().as_bytes()), b64u(test_notif.to_string().as_bytes()));
+        std::fs::write(dir.join("msg5.bin"), &test_input).unwrap();
+        sh(&format!("openssl dgst -sha256 -sign {d}/leaf.key -out {d}/sig5.der {d}/msg5.bin"));
+        let sig5 = String::from_utf8(sh(&format!(
+            "python3 -c \"from pathlib import Path; d=Path('{d}/sig5.der').read_bytes(); \
+             l1=d[3]; r=d[4:4+l1]; o=4+l1; l2=d[o+1]; s=d[o+2:o+2+l2]; \
+             r=r.lstrip(b'\\x00').rjust(32,b'\\x00'); s=s.lstrip(b'\\x00').rjust(32,b'\\x00'); \
+             import base64; print(base64.urlsafe_b64encode(r+s).decode().rstrip('='))\""))).unwrap();
+        let test_jws = format!("{test_input}.{}", sig5.trim());
+        let tn = verify_notification_with_root(&test_jws, &root_der).expect("TEST 通知验签应通过");
+        assert_eq!(tn.notification_type, "TEST");
+        assert!(tn.transaction.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
