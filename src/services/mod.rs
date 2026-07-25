@@ -6,6 +6,7 @@ pub mod geoip;
 pub mod feedback_store;
 pub mod moment_store;
 pub mod poem_store;
+pub mod quota_store;
 pub mod user_store;
 pub mod classroom_store;
 pub mod wechat;

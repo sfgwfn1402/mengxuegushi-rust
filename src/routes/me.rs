@@ -375,6 +375,59 @@ pub async fn remove_favorite(
     }))
 }
 
+// 每日限额（服务器口径）：新学闸口。会员/已学会/今日已开始 → 免费放行，否则每日 1 首。
+pub async fn quota_start_poem(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<QuotaStartPoemRequest>,
+) -> Result<Json<crate::services::quota_store::QuotaStatus>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    Ok(Json(
+        crate::services::quota_store::start_poem(&state.db, &user.id, payload.poem_id).await?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QuotaStartPoemRequest {
+    pub poem_id: i32,
+}
+
+// 发布成功记一次创作（朗诵/诗配画），与客户端 DailyQuota.recordCreation 同语义。
+pub async fn quota_record_creation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::quota_store::QuotaStatus>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    Ok(Json(
+        crate::services::quota_store::record_creation(&state.db, &user.id).await?,
+    ))
+}
+
+// DEBUG：清掉本人今天的限额流水（仅管理员；客户端开发者控制台「重置今日额度」用）。
+pub async fn quota_debug_reset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::quota_store::QuotaStatus>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    if user.role != "admin" {
+        return Err(AppError::Forbidden("admin only".to_string()));
+    }
+    Ok(Json(
+        crate::services::quota_store::debug_reset_today(&state.db, &user.id).await?,
+    ))
+}
+
+// 今日用量查询（客户端刷新本地缓存用）。
+pub async fn quota_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::quota_store::QuotaStatus>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    Ok(Json(
+        crate::services::quota_store::get_status(&state.db, &user.id).await?,
+    ))
+}
+
 pub async fn current_user(state: &AppState, headers: &HeaderMap) -> Result<User, AppError> {
     let token = headers
         .get("authorization")
