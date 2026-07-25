@@ -23,6 +23,10 @@ pub struct AppConfig {
     pub funasr_score_url: Option<String>,
     /// 社区/动态(UGC) 功能总开关。备案受阻时可在 .env 关闭后重启服务，无需重新发版。
     pub community_enabled: bool,
+    /// 二级开关·发现（作品展示：诗配画/朗诵，先审后发，风险低）。受总开关约束。
+    pub discover_enabled: bool,
+    /// 二级开关·动态社区（动态+评论互动，UGC 风险高）。受总开关约束。
+    pub moments_enabled: bool,
 }
 
 impl AppConfig {
@@ -92,9 +96,16 @@ impl AppConfig {
         .filter(|value| !value.trim().is_empty());
 
         // 社区(UGC) 开关；默认开启。设 COMMUNITY_ENABLED=false 可关闭。
-        let community_enabled = std::env::var("COMMUNITY_ENABLED")
-            .map(|value| !matches!(value.as_str(), "0" | "false" | "FALSE" | "no" | "NO"))
-            .unwrap_or(true);
+        let env_flag = |name: &str| {
+            std::env::var(name)
+                .map(|value| !matches!(value.as_str(), "0" | "false" | "FALSE" | "no" | "NO"))
+                .unwrap_or(true)
+        };
+        let community_enabled = env_flag("COMMUNITY_ENABLED");
+        // 二级开关（默认开启），且都受总开关约束：总开关关 = 全关。
+        // DISCOVER_ENABLED=false 关"发现作品展示"；MOMENTS_ENABLED=false 关"动态社区互动"。
+        let discover_enabled = community_enabled && env_flag("DISCOVER_ENABLED");
+        let moments_enabled = community_enabled && env_flag("MOMENTS_ENABLED");
 
         Ok(Self {
             port,
@@ -116,6 +127,8 @@ impl AppConfig {
             admin_token,
             funasr_score_url,
             community_enabled,
+            discover_enabled,
+            moments_enabled,
         })
     }
 }

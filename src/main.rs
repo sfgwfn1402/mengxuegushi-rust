@@ -104,8 +104,17 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn init_database(config: &AppConfig) -> anyhow::Result<sqlx::PgPool> {
+    // 所有连接统一用 Asia/Shanghai 时区,保证 CURRENT_DATE / now()::date / ::date 都按国内自然日,
+    // 否则 sqlx 默认 UTC 会让午夜前后的打卡/连续天数/每日任务算错一天。
     let pool = PgPoolOptions::new()
         .max_connections(10)
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                use sqlx::Executor;
+                conn.execute("SET TIME ZONE 'Asia/Shanghai'").await?;
+                Ok(())
+            })
+        })
         .connect(&config.database_url)
         .await?;
 

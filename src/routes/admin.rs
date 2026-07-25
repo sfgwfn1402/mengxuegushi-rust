@@ -51,6 +51,7 @@ async fn current_admin(state: &AppState, headers: &HeaderMap) -> Result<User, Ap
         nickname: Some("Admin Token".to_string()),
         avatar_url: None,
         role: "admin".to_string(),
+        bio: None,
     })
 }
 
@@ -80,6 +81,16 @@ pub async fn send_reminders(
     current_admin(&state, &headers).await?;
     let sent = reminder::send_daily_reminders(&state).await;
     Ok(Json(serde_json::json!({ "sent": sent })))
+}
+
+// 会员订阅记录（管理端）：最近上报的订阅，含用户昵称与到期时间
+pub async fn list_subscriptions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    current_admin(&state, &headers).await?;
+    let items = crate::services::subscription_store::list_recent(&state.db, 100).await?;
+    Ok(Json(serde_json::json!({ "items": items })))
 }
 
 // 亲子广场动态审核
@@ -231,4 +242,44 @@ pub async fn update_feedback_status(
     )
     .await?;
     Ok(Json(item))
+}
+
+// ── 举报处理(UGC 合规必备) ─────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ReportQuery {
+    pub status: Option<String>,
+}
+
+// 举报列表(默认 pending;status=all 看全部)
+pub async fn list_reports(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ReportQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    current_admin(&state, &headers).await?;
+    let status = query
+        .status
+        .as_deref()
+        .filter(|s| !s.is_empty() && *s != "all");
+    let items = crate::services::report_store::list_admin_reports(&state.db, status).await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveReportRequest {
+    pub action: String, // dismiss | takedown
+}
+
+// 处理一条举报:dismiss=忽略(内容保留);takedown=下架被举报内容
+pub async fn resolve_report(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(report_id): Path<String>,
+    Json(payload): Json<ResolveReportRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    current_admin(&state, &headers).await?;
+    crate::services::report_store::resolve_report(&state.db, &report_id, payload.action.trim())
+        .await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }

@@ -58,6 +58,22 @@ pub async fn create_recitation(
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
 
+    // 录音发布即视为"学会这首诗" → 点亮学习进度(班级诗词树 / 累计点亮据此聚合)。
+    sqlx::query(
+        r#"
+        INSERT INTO user_poem_progress (id, user_id, poem_id, learned, last_learned_at)
+        VALUES ($1, $2, $3, TRUE, NOW())
+        ON CONFLICT (user_id, poem_id)
+        DO UPDATE SET learned = TRUE, last_learned_at = NOW(), updated_at = NOW()
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(user_id)
+    .bind(poem_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(err.to_string()))?;
@@ -303,7 +319,7 @@ pub async fn like_recitation(
             r#"
             UPDATE user_recitations
             SET like_count = like_count + 1, updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1 AND status = 'public'
+            WHERE id = $1 AND status <> 'deleted'
             "#,
         )
         .bind(recitation_id)
@@ -351,7 +367,7 @@ pub async fn unlike_recitation(
             r#"
             UPDATE user_recitations
             SET like_count = GREATEST(like_count - 1, 0), updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1 AND status = 'public'
+            WHERE id = $1 AND status <> 'deleted'
             "#,
         )
         .bind(recitation_id)
@@ -378,7 +394,7 @@ async fn fetch_like_count_in_tx(
     let like_count = sqlx::query_scalar::<_, i32>(
         r#"
         SELECT like_count FROM user_recitations
-        WHERE id = $1 AND status = 'public'
+        WHERE id = $1 AND status <> 'deleted'
         "#,
     )
     .bind(recitation_id)
@@ -394,7 +410,7 @@ pub async fn get_object_path(db: &PgPool, recitation_id: &str) -> Result<String,
     sqlx::query_scalar::<_, String>(
         r#"
         SELECT object_path FROM user_recitations
-        WHERE id = $1 AND status IN ('active','submitted','public')
+        WHERE id = $1 AND status IN ('active','submitted','public','rejected')
         "#,
     )
     .bind(recitation_id)

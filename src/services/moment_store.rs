@@ -169,14 +169,16 @@ pub async fn get_moment(
                EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $2 AND f.followee_id = m.user_id) AS followed_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
-        WHERE m.id = $1 AND m.status IN ('submitted','public')
+        WHERE m.id = $1
+          AND (m.status IN ('submitted','public') OR (m.user_id = $2 AND m.status = 'rejected'))
         "#,
     )
     .bind(moment_id)
     .bind(current_user_id.unwrap_or(""))
-    .fetch_one(db)
+    .fetch_optional(db)
     .await
-    .map_err(|err| AppError::Internal(err.to_string()))?;
+    .map_err(|err| AppError::Internal(err.to_string()))?
+    .ok_or_else(|| AppError::NotFound(format!("moment {moment_id}")))?;   // 已删/无权 → 干净 404，不再 500
 
     row_to_moment(row)
 }
@@ -265,6 +267,15 @@ pub async fn soft_delete(
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?
     .rows_affected();
+
+    if affected > 0 {
+        // 动态删除时，连带物理删除它的全部评论（含回复），评论不再残留。
+        sqlx::query("DELETE FROM moment_comments WHERE moment_id = $1")
+            .bind(moment_id)
+            .execute(db)
+            .await
+            .map_err(|err| AppError::Internal(err.to_string()))?;
+    }
 
     Ok(DeleteMomentResponse {
         deleted: affected > 0,
@@ -539,7 +550,7 @@ pub async fn get_user_profile(
 ) -> Result<UserProfile, AppError> {
     let row = sqlx::query(
         r#"
-        SELECT u.nickname, u.avatar_url,
+        SELECT u.nickname, u.avatar_url, u.bio,
                (SELECT COUNT(*) FROM user_follows WHERE follower_id = $1) AS following_count,
                (SELECT COUNT(*) FROM user_follows WHERE followee_id = $1) AS follower_count,
                (SELECT COUNT(*) FROM moments WHERE user_id = $1
@@ -560,6 +571,7 @@ pub async fn get_user_profile(
         user_id: user_id.to_string(),
         nickname: row.get("nickname"),
         avatar_url: row.get("avatar_url"),
+        bio: row.try_get("bio").unwrap_or(None),
         following_count: row.get("following_count"),
         follower_count: row.get("follower_count"),
         moment_count: row.get("moment_count"),
@@ -584,7 +596,7 @@ pub async fn list_user_moments(
                EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $2 AND f.followee_id = m.user_id) AS followed_by_me
         FROM moments m
         JOIN users u ON u.id = m.user_id
-        WHERE m.user_id = $1 AND (m.status = 'public' OR ($1 = $2 AND m.status = 'submitted'))
+        WHERE m.user_id = $1 AND (m.status = 'public' OR ($1 = $2 AND m.status IN ('submitted','rejected')))
         ORDER BY m.created_at DESC
         LIMIT $3 OFFSET $4
         "#,

@@ -228,6 +228,44 @@ pub async fn unlike(
     Ok(Json(moment_store::unlike_moment(&state.db, &moment_id, &user.id).await?))
 }
 
+/// 「赞和收藏」列表：谁赞了这条动态（含相对当前用户的关注状态）。
+pub async fn likers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(moment_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use sqlx::Row;
+    let viewer = current_user(&state, &headers).await.map(|u| u.id).unwrap_or_default();
+    let rows = sqlx::query(
+        r#"
+        SELECT u.id AS user_id, u.nickname, u.avatar_url, ml.created_at,
+               EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id = $2 AND f.followee_id = u.id) AS followed_by_me
+        FROM moment_likes ml JOIN users u ON u.id = ml.user_id
+        WHERE ml.moment_id = $1
+        ORDER BY ml.created_at DESC LIMIT 200
+        "#,
+    )
+    .bind(&moment_id)
+    .bind(&viewer)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    let items: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|r| {
+            let ts: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            serde_json::json!({
+                "user_id": r.get::<String, _>("user_id"),
+                "nickname": r.get::<Option<String>, _>("nickname"),
+                "avatar_url": r.get::<Option<String>, _>("avatar_url"),
+                "followed_by_me": r.get::<bool, _>("followed_by_me"),
+                "created_at": ts.to_rfc3339(),
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
 pub async fn delete_moment(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -462,6 +500,43 @@ pub async fn unblock_user(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(Json(serde_json::json!({ "blocked": false })))
+}
+
+// 我拉黑的用户列表(拉黑管理)。
+pub async fn list_blocks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use sqlx::Row;
+    let me = current_user(&state, &headers).await?;
+    let rows = sqlx::query(
+        r#"
+        SELECT b.blocked_id, u.nickname, u.avatar_url, b.created_at
+        FROM user_blocks b
+        LEFT JOIN users u ON u.id = b.blocked_id
+        WHERE b.blocker_id = $1
+        ORDER BY b.created_at DESC
+        "#,
+    )
+    .bind(&me.id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let items: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|row| {
+            let created: chrono::DateTime<chrono::Utc> =
+                row.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now());
+            serde_json::json!({
+                "id": row.try_get::<String, _>("blocked_id").unwrap_or_default(),
+                "nickname": row.try_get::<Option<String>, _>("nickname").unwrap_or(None),
+                "avatar_url": row.try_get::<Option<String>, _>("avatar_url").unwrap_or(None),
+                "created_at": created.to_rfc3339(),
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "items": items })))
 }
 
 pub async fn media(

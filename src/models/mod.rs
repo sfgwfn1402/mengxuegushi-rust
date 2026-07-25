@@ -8,6 +8,7 @@ pub mod moment;
 pub mod poem;
 pub mod profile;
 pub mod user;
+pub mod classroom;
 
 pub mod home;
 pub mod recitation;

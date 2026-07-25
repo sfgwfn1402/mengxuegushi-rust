@@ -52,8 +52,10 @@ pub async fn update_profile(
         .avatar_url
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    // 简介允许清空：传了就用（含空串），未传则保持不变。
+    let bio = payload.bio.map(|value| value.trim().chars().take(80).collect::<String>());
     Ok(Json(
-        user_store::update_profile(&state.db, &user.id, nickname, avatar_url).await?,
+        user_store::update_profile(&state.db, &user.id, nickname, avatar_url, bio).await?,
     ))
 }
 
@@ -126,7 +128,7 @@ pub async fn upload_avatar(
         format!("/avatars/{avatar_relative_path}")
     };
 
-    user_store::update_profile(&state.db, &user.id, None, Some(avatar_url.clone())).await?;
+    user_store::update_profile(&state.db, &user.id, None, Some(avatar_url.clone()), None).await?;
     Ok(Json(AvatarUploadResponse { avatar_url }))
 }
 
@@ -291,6 +293,38 @@ pub async fn list_recitations(
     let limit = query.limit.unwrap_or(20).clamp(1, 100);
     let items = recitation_store::list_active_by_user(&state.db, &user.id, limit).await?;
     Ok(Json(RecitationListResponse { items }))
+}
+
+// 会员订阅：客户端购买/续期/恢复后上报 StoreKit 2 签名交易(JWS)，服务端验签落库。
+pub async fn report_subscription(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<ReportSubscriptionRequest>,
+) -> Result<Json<crate::services::subscription_store::EntitlementResponse>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    let jws = payload.signed_transaction.trim();
+    if jws.is_empty() {
+        return Err(AppError::BadRequest("signed_transaction is required".to_string()));
+    }
+    Ok(Json(
+        crate::services::subscription_store::report_subscription(&state.db, &user.id, jws).await?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReportSubscriptionRequest {
+    pub signed_transaction: String,
+}
+
+// 当前会员资格（服务器口径：验过签、未撤销、未过期）。
+pub async fn entitlement(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::services::subscription_store::EntitlementResponse>, AppError> {
+    let user = current_user(&state, &headers).await?;
+    Ok(Json(
+        crate::services::subscription_store::entitlement(&state.db, &user.id).await?,
+    ))
 }
 
 pub async fn list_favorites(

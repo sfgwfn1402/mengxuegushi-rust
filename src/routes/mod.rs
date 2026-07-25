@@ -23,6 +23,12 @@ pub fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/app-config", get(home::app_config))
         .route("/home/community-stats", get(home::community_stats))
+        .route("/home/online-globe", get(home::online_globe))
+        .route("/classes", post(classroom::create_class))
+        .route("/classes/mine", get(classroom::my_classes))
+        .route("/classes/join", post(classroom::join_class))
+        .route("/classes/{id}/tree", get(classroom::class_tree))
+        .route("/classes/{id}/leave", post(classroom::leave_class))
         .route("/home/today-poem", get(home::today_poem))
         .route("/home/continue-learning", get(home::continue_learning))
         .route("/home/recommendations", get(home::recommendations))
@@ -44,9 +50,16 @@ pub fn api_routes() -> Router<AppState> {
             "/admin/artworks/{artwork_id}/review",
             post(admin::review_artwork),
         )
+        .route("/admin/reports", get(admin::list_reports))
+        .route(
+            "/admin/reports/{report_id}/resolve",
+            post(admin::resolve_report),
+        )
         .route("/themes", get(themes::list_themes))
         .route("/feedback", post(feedback::submit_parent_feedback))
         .route("/poems", get(poems::list_poems))
+        .route("/poems/panel-positions", get(poems::list_panel_positions))
+        .route("/admin/poems/{poem_id}/panel-position", axum::routing::put(poems::set_panel_position))
         .route("/poems/{id}", get(poems::get_poem))
         .route(
             "/poems/{poem_id}/recitations/featured",
@@ -121,6 +134,7 @@ pub fn api_routes() -> Router<AppState> {
             "/moments/{moment_id}/like",
             post(moments::like).delete(moments::unlike),
         )
+        .route("/moments/{moment_id}/likes", get(moments::likers))
         .route(
             "/moments/{moment_id}/comments",
             get(moments::list_comments).post(moments::create_comment),
@@ -141,17 +155,22 @@ pub fn api_routes() -> Router<AppState> {
             "/users/{user_id}/block",
             post(moments::block_user).delete(moments::unblock_user),
         )
+        .route("/me/blocks", get(moments::list_blocks))
         .route("/reports", post(moments::report_content))
         .route("/admin/moments", get(admin::list_moments))
         .route("/admin/moments/{moment_id}/review", post(admin::review_moment))
         .route("/admin/send-reminders", post(admin::send_reminders))
         .route("/me/messages/summary", get(messages::summary))
         .route("/me/messages/list", get(messages::list))
+        .route("/me/messages/read", post(messages::mark_read))
         .route("/me/likes", get(messages::my_likes))
         .route("/me/comments", get(messages::my_comments))
         .route("/me/tasks", post(me::complete_task))
         .route("/me/clear-data", post(me::clear_data))
         .route("/me/progress", get(me::list_progress))
+        .route("/me/subscription/report", post(me::report_subscription))
+        .route("/me/entitlement", get(me::entitlement))
+        .route("/admin/subscriptions", get(admin::list_subscriptions))
         .route("/me/recitations", get(me::list_recitations))
         .route("/me/progress/{poem_id}", post(me::update_progress))
         .route(
@@ -165,3 +184,4 @@ pub fn api_routes() -> Router<AppState> {
         )
 }
 pub mod home;
+pub mod classroom;

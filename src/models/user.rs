@@ -8,6 +8,8 @@ pub struct User {
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
     pub role: String,
+    #[serde(default)]
+    pub bio: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -80,7 +80,7 @@ pub async fn get_invite_count(db: &PgPool, user_id: &str) -> Result<i32, AppErro
 
 pub async fn find_user_by_id(db: &PgPool, id: &str) -> Result<Option<User>, AppError> {
     let row =
-        sqlx::query("SELECT id, openid, unionid, nickname, avatar_url, COALESCE(role, 'user') AS role FROM users WHERE id = $1")
+        sqlx::query("SELECT id, openid, unionid, nickname, avatar_url, bio, COALESCE(role, 'user') AS role FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
             .await
@@ -91,7 +91,7 @@ pub async fn find_user_by_id(db: &PgPool, id: &str) -> Result<Option<User>, AppE
 
 pub async fn find_user_by_openid(db: &PgPool, openid: &str) -> Result<Option<User>, AppError> {
     let row = sqlx::query(
-        "SELECT id, openid, unionid, nickname, avatar_url, COALESCE(role, 'user') AS role FROM users WHERE openid = $1",
+        "SELECT id, openid, unionid, nickname, avatar_url, bio, COALESCE(role, 'user') AS role FROM users WHERE openid = $1",
     )
     .bind(openid)
     .fetch_optional(db)
@@ -106,6 +106,7 @@ pub async fn update_profile(
     user_id: &str,
     nickname: Option<String>,
     avatar_url: Option<String>,
+    bio: Option<String>,
 ) -> Result<User, AppError> {
     sqlx::query(
         r#"
@@ -113,6 +114,7 @@ pub async fn update_profile(
         SET
             nickname = COALESCE($1, nickname),
             avatar_url = COALESCE($2, avatar_url),
+            bio = COALESCE($4, bio),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $3
         "#,
@@ -120,6 +122,7 @@ pub async fn update_profile(
     .bind(nickname)
     .bind(avatar_url)
     .bind(user_id)
+    .bind(bio)
     .execute(db)
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
@@ -330,7 +333,7 @@ pub async fn find_account_user(
 ) -> Result<Option<(User, String)>, AppError> {
     let column = if kind == "email" { "email" } else { "phone" };
     let sql = format!(
-        "SELECT id, openid, unionid, nickname, avatar_url, COALESCE(role, 'user') AS role, password_hash \
+        "SELECT id, openid, unionid, nickname, avatar_url, bio, COALESCE(role, 'user') AS role, password_hash \
          FROM users WHERE {column} = $1"
     );
 
@@ -354,6 +357,7 @@ fn row_to_user(row: sqlx::postgres::PgRow) -> User {
         nickname: row.get("nickname"),
         avatar_url: row.get("avatar_url"),
         role: row.get("role"),
+        bio: row.try_get("bio").unwrap_or(None),   // 缺列时安全降级为 None
     }
 }
 

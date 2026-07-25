@@ -414,7 +414,7 @@ pub async fn like_artwork(
 
     if inserted > 0 {
         sqlx::query(
-            "UPDATE poem_artworks SET like_count = like_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'public'",
+            "UPDATE poem_artworks SET like_count = like_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status <> 'deleted'",
         )
         .bind(artwork_id)
         .execute(&mut *tx)
@@ -453,7 +453,7 @@ pub async fn unlike_artwork(
 
     if deleted > 0 {
         sqlx::query(
-            "UPDATE poem_artworks SET like_count = GREATEST(like_count - 1, 0), updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'public'",
+            "UPDATE poem_artworks SET like_count = GREATEST(like_count - 1, 0), updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status <> 'deleted'",
         )
         .bind(artwork_id)
         .execute(&mut *tx)
@@ -476,7 +476,7 @@ async fn fetch_like_count_in_tx(
     artwork_id: &str,
 ) -> Result<i32, AppError> {
     sqlx::query_scalar::<_, i32>(
-        "SELECT like_count FROM poem_artworks WHERE id = $1 AND status = 'public'",
+        "SELECT like_count FROM poem_artworks WHERE id = $1 AND status <> 'deleted'",
     )
     .bind(artwork_id)
     .fetch_optional(&mut **tx)

@@ -287,19 +287,77 @@ pub async fn detail(
     ))
 }
 
+/// 解析 Range 头 "bytes=start-end" / "bytes=start-" / "bytes=-suffix" → (start, end)(闭区间)。
+fn parse_byte_range(value: &str, total: u64) -> Option<(u64, u64)> {
+    let spec = value.trim().strip_prefix("bytes=")?;
+    let (start_s, end_s) = spec.split_once('-')?;
+    if start_s.is_empty() {
+        // 后缀式:最后 N 字节
+        let n: u64 = end_s.trim().parse().ok()?;
+        if n == 0 || total == 0 {
+            return None;
+        }
+        return Some((total.saturating_sub(n), total - 1));
+    }
+    let start: u64 = start_s.trim().parse().ok()?;
+    if start >= total {
+        return None;
+    }
+    let end: u64 = if end_s.trim().is_empty() {
+        total - 1
+    } else {
+        end_s.trim().parse::<u64>().ok()?.min(total - 1)
+    };
+    if end < start {
+        return None;
+    }
+    Some((start, end))
+}
+
 pub async fn audio(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(recitation_id): Path<String>,
 ) -> Result<Response<Body>, AppError> {
+    use axum::http::{header, StatusCode};
     let object_path = recitation_store::get_object_path(&state.db, &recitation_id).await?;
     let (bytes, content_type) = minio_store::get_object(&state.config, &object_path).await?;
+    let total = bytes.len() as u64;
+    let ct = HeaderValue::from_str(&content_type)
+        .unwrap_or_else(|_| HeaderValue::from_static("audio/mp4"));
+
+    // 支持 HTTP Range:AVPlayer 靠它边下边播、拖进度。带 Range 头就回 206 分段。
+    if let Some((start, end)) = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| parse_byte_range(v, total))
+    {
+        let slice = bytes[start as usize..=end as usize].to_vec();
+        let len = end - start + 1;
+        let mut response = Response::new(Body::from(slice));
+        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+        let h = response.headers_mut();
+        h.insert(header::CONTENT_TYPE, ct);
+        h.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+        if let Ok(cr) = HeaderValue::from_str(&format!("bytes {}-{}/{}", start, end, total)) {
+            h.insert(header::CONTENT_RANGE, cr);
+        }
+        h.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
+        h.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000"),
+        );
+        return Ok(response);
+    }
+
+    // 无 Range:整段返回,但声明 Accept-Ranges,客户端据此再发 Range 请求。
     let mut response = Response::new(Body::from(bytes));
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        HeaderValue::from_str(&content_type).map_err(|err| AppError::Internal(err.to_string()))?,
-    );
-    response.headers_mut().insert(
-        axum::http::header::CACHE_CONTROL,
+    let h = response.headers_mut();
+    h.insert(header::CONTENT_TYPE, ct);
+    h.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    h.insert(header::CONTENT_LENGTH, HeaderValue::from(total));
+    h.insert(
+        header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000"),
     );
     Ok(response)

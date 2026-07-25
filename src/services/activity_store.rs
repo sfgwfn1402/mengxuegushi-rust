@@ -9,6 +9,44 @@ use crate::{
     },
 };
 
+/// 活动日 = 当天完成过任一每日任务的日子(含打卡)。返回 (连续天数, 活动总天数)。
+async fn compute_activity(db: &PgPool, user_id: &str) -> Result<(u32, u32), AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT DISTINCT d FROM (
+            SELECT task_date AS d FROM user_daily_tasks WHERE user_id = $1
+            UNION
+            SELECT checkin_date AS d FROM user_checkins WHERE user_id = $1
+        ) u
+        WHERE d <= CURRENT_DATE
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    let days: std::collections::HashSet<chrono::NaiveDate> =
+        rows.iter().map(|r| r.get::<chrono::NaiveDate, _>("d")).collect();
+    let active_days = days.len() as u32;
+
+    let today: chrono::NaiveDate = sqlx::query_scalar("SELECT CURRENT_DATE")
+        .fetch_one(db)
+        .await
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    let mut streak: u32 = 0;
+    let mut cursor = today;
+    while days.contains(&cursor) {
+        streak += 1;
+        match cursor.pred_opt() {
+            Some(prev) => cursor = prev,
+            None => break,
+        }
+    }
+    Ok((streak, active_days))
+}
+
 pub async fn get_stats(db: &PgPool, user_id: &str) -> Result<UserStatsResponse, AppError> {
     ensure_stats(db, user_id).await?;
 
@@ -38,10 +76,14 @@ pub async fn get_stats(db: &PgPool, user_id: &str) -> Result<UserStatsResponse, 
     .await
     .map_err(|err| AppError::Internal(err.to_string()))?;
 
+    // 诗光 = 每日任务累加所得(complete_task 累加进 user_stats.stars):今日学习+3 / 复习巩固+2 / 每日打卡+2。
+    // 连续/活动天数按"当天完成过任一任务(含打卡)"算——诗光页和小诗童完全同一套。
+    let (streak, active_days) = compute_activity(db, user_id).await?;
+
     Ok(UserStatsResponse {
         stars: get_i64(&row, "stars") as u32,
-        total_days: get_i64(&row, "total_days") as u32,
-        streak: get_i64(&row, "streak") as u32,
+        total_days: active_days,   // 「学习天」= 有完成任务的总天数
+        streak,
         learned_poem_count: get_i64(&row, "learned_poem_count") as u32,
         learned_idiom_count: get_i64(&row, "learned_idiom_count") as u32,
         today_checked: row.get("today_checked"),
@@ -85,6 +127,9 @@ pub async fn checkin(db: &PgPool, user_id: &str) -> Result<CheckinResponse, AppE
         .await
         .map_err(|err| AppError::Internal(err.to_string()))?;
     }
+
+    // 打卡同时完成「每日打卡」任务 +1(每天一次,幂等)。
+    let _ = complete_task(db, user_id, "checkin", 1).await?;
 
     let stats = get_stats(db, user_id).await?;
     Ok(CheckinResponse {

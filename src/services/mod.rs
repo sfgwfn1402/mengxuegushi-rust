@@ -1,4 +1,5 @@
 pub mod activity_store;
+pub mod apple_iap;
 pub mod artwork_store;
 pub mod event_store;
 pub mod geoip;
@@ -6,10 +7,13 @@ pub mod feedback_store;
 pub mod moment_store;
 pub mod poem_store;
 pub mod user_store;
+pub mod classroom_store;
 pub mod wechat;
 
 pub mod home_store;
 pub mod minio_store;
 pub mod recitation_store;
+pub mod report_store;
 pub mod reminder;
+pub mod subscription_store;
 pub mod theme_store;

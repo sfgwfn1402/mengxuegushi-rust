@@ -33,3 +33,17 @@ pub struct CommunityStatsResponse {
     pub today_lit: i64,
     pub total_lit: i64,
 }
+
+// 首页 3D 地球：在线小诗人。
+#[derive(Debug, Serialize)]
+pub struct OnlineGlobeUser {
+    pub id: String,
+    pub name: String,
+    pub avatar: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OnlineGlobeResponse {
+    pub count: i64,
+    pub users: Vec<OnlineGlobeUser>,
+}

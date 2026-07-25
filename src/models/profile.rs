@@ -4,4 +4,5 @@ use serde::Deserialize;
 pub struct UpdateProfileRequest {
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
+    pub bio: Option<String>,
 }
