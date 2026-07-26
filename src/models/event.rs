@@ -43,3 +43,14 @@ pub struct AnalyticsResponse {
     pub daily_active: Vec<DailyActive>,
     pub top_poems: Vec<TopPoem>,
 }
+
+/// 单条事件（管理端"最近事件"查询用，主要用于 app_error 远程错误监控）。
+#[derive(Debug, Serialize)]
+pub struct EventItem {
+    pub id: i64,
+    pub event_name: String,
+    pub user_id: Option<String>,
+    pub page: Option<String>,
+    pub props: Option<serde_json::Value>,
+    pub created_at: String,
+}

@@ -3,7 +3,7 @@ use sqlx::{PgPool, Row};
 use crate::{
     error::AppError,
     models::event::{
-        AnalyticsResponse, DailyActive, EventCount, TopPoem, TrackEventInput,
+        AnalyticsResponse, DailyActive, EventCount, EventItem, TopPoem, TrackEventInput,
     },
 };
 
@@ -122,4 +122,37 @@ pub async fn analytics(db: &PgPool, range_days: i64) -> Result<AnalyticsResponse
         daily_active,
         top_poems,
     })
+}
+
+/// 最近事件（新→旧）。event 为空查全部；limit 默认 50、上限 200。
+/// 主要用途：管理端查看 app_error 远程错误监控。
+pub async fn recent_events(
+    db: &PgPool,
+    event: Option<&str>,
+    limit: i64,
+) -> Result<Vec<EventItem>, AppError> {
+    let limit = limit.clamp(1, 200);
+    let rows = sqlx::query(
+        "SELECT id, event_name, user_id, page, props,
+                to_char(created_at, 'MM-DD HH24:MI:SS') AS created_at
+         FROM events
+         WHERE ($1::text IS NULL OR event_name = $1)
+         ORDER BY id DESC LIMIT $2",
+    )
+    .bind(event)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+    .map_err(|err| AppError::Internal(err.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|r| EventItem {
+            id: r.get("id"),
+            event_name: r.get("event_name"),
+            user_id: r.get("user_id"),
+            page: r.get("page"),
+            props: r.get("props"),
+            created_at: r.get("created_at"),
+        })
+        .collect())
 }

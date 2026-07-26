@@ -73,6 +73,30 @@ pub async fn analytics(
     ))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EventsQuery {
+    pub event: Option<String>,
+    pub limit: Option<i64>,
+}
+
+// 最近事件查询（默认全部，可 ?event=app_error 过滤）——远程错误监控用
+pub async fn recent_events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<EventsQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    current_admin(&state, &headers).await?;
+    let event = query
+        .event
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let items =
+        crate::services::event_store::recent_events(&state.db, event, query.limit.unwrap_or(50))
+            .await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
 // 手动触发学习提醒发送（管理员/测试用，定时任务也调同一逻辑）
 pub async fn send_reminders(
     State(state): State<AppState>,

@@ -1,0 +1,12 @@
+-- 2026-07-26: 给 poems 表加 custom_lines_json 字段
+-- 用于下发"自定义诗行切分"给客户端，覆盖默认按 `，。！？；` 标点切。
+-- 典型场景：咏鹅 (id=9) "鹅，鹅，鹅，曲项向天歌。白毛浮绿水，红掌拨清波。"
+-- 默认按 `，` 切成 6 句，但官方朗读和 follow_timings 都是 4 句合并版，
+-- 详情页逐行显示必须用 4 句才能跟音频高亮对齐。
+--
+-- 字段语义（与 iOS Poem.swift 中 customLines 解码的 custom_lines 对应）：
+--   - DEFAULT '[]'：诗没有自定义行切分时客户端走默认标点切
+--   - JSON 数组：每元素是一行原文（含标点），如 ["鹅，鹅，鹅，", "曲项向天歌。", ...]
+--   - 客户端（iOS Poem.swift lines extension）逻辑：先看 customLines（后端下发），
+--     否则看本地 hardcodedLines（兜底），最后按 content 标点切
+ALTER TABLE poems ADD COLUMN IF NOT EXISTS custom_lines_json TEXT NOT NULL DEFAULT '[]';

@@ -122,6 +122,7 @@ pub fn api_routes() -> Router<AppState> {
         .route("/invite/inviter/{code}", get(me::inviter_name))
         .route("/events", post(me::track_events))
         .route("/admin/analytics", get(admin::analytics))
+        .route("/admin/events", get(admin::recent_events))
         .route("/moments", get(moments::list).post(moments::create))
         .route("/moments/mine", get(moments::list_mine))
         .route("/moments/upload-image", post(moments::upload_image))

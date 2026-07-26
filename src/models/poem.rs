@@ -25,6 +25,13 @@ pub struct Poem {
     pub themes: Vec<PoemThemeTag>,
     #[serde(default)]
     pub follow_timings: Option<serde_json::Value>,
+    /// 2026-07-26: Optional override of `content`'s default punctuation-based
+    /// line split. For poems whose default split is wrong (咏鹅 id=9 etc.),
+    /// backend can supply the canonical 4-句 breakdown here so detail pages
+    /// highlight matches the audio. Client (iOS Poem.swift `lines` extension)
+    /// prefers this over the default 标点切.
+    #[serde(default)]
+    pub custom_lines: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -119,7 +119,7 @@ fn build_list_query(query: &PoemListQuery) -> QueryBuilder<'_, Postgres> {
         SELECT
             id, title, author, dynasty, content_json, pinyin, translation, story, parent_guide,
             difficulty, level, tags_json, season, audio_url, audio_version, image_url, video_available, card_unlocked,
-            annotated_content_json,
+            annotated_content_json, custom_lines_json,
             COALESCE((
                 SELECT json_agg(json_build_object('id', t.id, 'name', t.name, 'emoji', t.emoji) ORDER BY t.sort_order)
                 FROM poem_theme_relations ptr
@@ -254,6 +254,7 @@ async fn insert_poem(db: &PgPool, poem: Poem) -> Result<(), AppError> {
 fn row_to_poem(row: sqlx::postgres::PgRow) -> Result<Poem, AppError> {
     let tags_json: String = row.get("tags_json");
     let annotated_content_json: String = row.get("annotated_content_json");
+    let custom_lines_json: String = row.get("custom_lines_json");
     let id: i32 = row.get("id");
     let difficulty: i32 = row.get("difficulty");
     let level: i32 = row.get("level");
@@ -291,6 +292,14 @@ fn row_to_poem(row: sqlx::postgres::PgRow) -> Result<Poem, AppError> {
         themes: serde_json::from_str::<Vec<PoemThemeTag>>(&row.get::<String, _>("themes_json"))
             .map_err(|err| AppError::Internal(err.to_string()))?,
         follow_timings,
+        custom_lines: if custom_lines_json.trim() == "[]" {
+            None
+        } else {
+            Some(
+                serde_json::from_str::<Vec<String>>(&custom_lines_json)
+                    .map_err(|err| AppError::Internal(err.to_string()))?,
+            )
+        },
     })
 }
 
@@ -316,7 +325,7 @@ macro_rules! select_poem_sql {
             SELECT
                 id, title, author, dynasty, content_json, pinyin, translation, story, parent_guide,
                 difficulty, level, tags_json, season, audio_url, audio_version, image_url, video_available, card_unlocked,
-                annotated_content_json,
+                annotated_content_json, custom_lines_json,
                 COALESCE((
                     SELECT json_agg(json_build_object('id', t.id, 'name', t.name, 'emoji', t.emoji) ORDER BY t.sort_order)
                     FROM poem_theme_relations ptr
